@@ -1,288 +1,163 @@
 """
-## Documentation
-Quickstart: https://github.com/google-gemini/cookbook/blob/main/quickstarts/Get_started_LiveAPI.py
-
-## Setup
-
-To install the dependencies for this script, run:
-
-```
-pip install google-genai opencv-python pyaudio pillow mss
-```
+Gemini Live Realtime Voice AI Service
+Handles bidirectional real-time audio and text communication with the Gemini Live API.
 """
 
-import os
 import asyncio
 import base64
-import io
-import traceback
-
+import json
+import os
+import websockets
 from dotenv import load_dotenv
+
 load_dotenv()
 
-import cv2
-import pyaudio
-import PIL.Image
+# ─── Configuration ────────────────────────────────────────────────────────────
+DEFAULT_MODEL = "gemini-3.1-flash-live-preview"
+GEMINI_WS_BASE_URL = (
+    "wss://generativelanguage.googleapis.com"
+    "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+)
 
-import argparse
-
-from google import genai
-from google.genai import types
-from google.genai.types import Type
-
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-SEND_SAMPLE_RATE = 16000
-RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE = 1024
-
-MODEL = "models/gemini-3.5-live-translate-preview"
-
-DEFAULT_MODE = "camera"
-
-client = genai.Client(
-    http_options={"api_version": "v1beta"},
-    api_key=os.environ.get("GEMINI_API_KEY"),
+DEFAULT_SYSTEM_INSTRUCTION = (
+    "તમે એક અનુભવી ગુજરાતી ઓર્ગેનિક ખેડૂત છો જેઓ ઓર્ગેનિક ખેતી વિશે ઊંડી સમજ ધરાવો છો.\n"
+    "તમારી ભૂમિકા:\n"
+    "- ખેડૂતોને ઓર્ગેનિક ખેતીની સલાહ આપવી\n"
+    "- કુદરતી ખાતર, જૈવ જંતુનાશક, અને ટકાઉ ખેતી પ્રણાલી વિશે માર્ગદર્શન આપવું\n"
+    "- ગુજરાતની સ્થાનિક ફસલો — કપાસ, મગફળી, ઘઉં, બાજરી, શાકભાજી — વિશે જ્ઞાન આપવું\n"
+    "- જમીન, પાણી, ઋતુ અનુસાર ખેતી અંગે સૂચનો આપવા\n\n"
+    "નિયમો:\n"
+    "- હંમેશા માત્ર ગુજરાતી ભાષામાં જ જવાબ આપો\n"
+    "- સરળ, સ્થાનિક ભાષા વાપરો જે સામાન્ય ખેડૂત સમજી શકે\n"
+    "- ઓર્ગેનિક અને કુદરતી ઉપાયો જ સૂચવો, રાસાયણિક ઉત્પાદનો નહીં\n"
+    "- ગરમ, મૈત્રીપૂર્ણ અને વ્યવહારુ અભિગમ રાખો"
 )
 
 
-SYSTEM_INSTRUCTION = """
-તમે એક અનુભવી ગુજરાતી ઓર્ગેનિક ખેડૂત છો જેઓ ઓર્ગેનિક ખેતી વિશે ઊંડી સમજ ધરાવો છો.
-તમારી ભૂમિકા:
-- ખેડૂતોને ઓર્ગેનિક ખેતીની સલાહ આપવી
-- કુદરતી ખાતર, જૈવ જંતુનાશક, અને ટકાઉ ખેતી પ્રણાલી વિશે માર્ગદર્શન આપવું
-- ગુજરાતની સ્થાનિક ફસલો — જેમ કે કપાસ, મગફળી, ઘઉં, બાજરી, શાકભાજી — વિશે સ્થાનિક જ્ઞાન શેર કરવું
-- જમીનની ફળદ્રુપતા, પાણી વ્યવસ્થાપન, અને ઋતુ અનુસાર ખેતી અંગે સૂચનો આપવા
-
-નિયમો:
-- હંમેશા માત્ર ગુજરાતી ભાષામાં જ જવાબ આપો
-- સરળ અને સ્થાનિક ભાષા વાપરો જે સામાન્ય ખેડૂત સમજી શકે
-- ઓર્ગેનિક અને કુદરતી ઉપાયો જ સૂચવો, રાસાયણિક ઉત્પાદનો નહીં
-- ગરમ, મૈત્રીપૂર્ણ અને વ્યવહારુ અભિગમ રાખો
-"""
-
-CONFIG = types.LiveConnectConfig(
-    response_modalities=[
-        "AUDIO",
-    ],
-    system_instruction=types.Content(
-        parts=[types.Part(text=SYSTEM_INSTRUCTION)],
-        role="user",
-    ),
-    media_resolution="MEDIA_RESOLUTION_MEDIUM",
-    context_window_compression=types.ContextWindowCompressionConfig(
-        trigger_tokens=0,
-        sliding_window=types.SlidingWindow(target_tokens=0),
-    ),
-    translation_config=types.TranslationConfig(
-        target_language_code="gu",
-    ),
-)
-
-pya = pyaudio.PyAudio()
+def get_gemini_ws_url(api_key: str | None = None) -> str:
+    """Constructs the WebSocket URL for Gemini Live API."""
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not key:
+        raise ValueError("GEMINI_API_KEY is not set. Please add it to your .env file.")
+    return f"{GEMINI_WS_BASE_URL}?key={key}"
 
 
-class AudioLoop:
-    def __init__(self, video_mode=DEFAULT_MODE):
-        self.video_mode = video_mode
+def build_setup_message(
+    model: str = DEFAULT_MODEL,
+    system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
+    voice_name: str = "Aoede",
+) -> dict:
+    """Constructs the initial setup configuration for the Gemini Live WebSocket session."""
+    return {
+        "setup": {
+            "model": f"models/{model}",
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": {"voiceName": voice_name}
+                    }
+                },
+            },
+            "systemInstruction": {
+                "parts": [{"text": system_instruction}]
+            },
+        }
+    }
 
-        self.audio_in_queue = None
-        self.out_queue = None
 
-        self.session = None
+async def handle_gemini_live_session(
+    browser_ws,
+    api_key: str | None = None,
+    model: str = DEFAULT_MODEL,
+    system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
+    voice_name: str = "Aoede",
+):
+    """
+    Bridges a FastAPI WebSocket connection from the browser to the Gemini Live WebSocket API.
+    Handles:
+      1. Gemini setup handshake
+      2. Mic audio streaming (Browser -> Gemini)
+      3. PCM audio & transcript streaming (Gemini -> Browser)
+    """
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not key:
+        await browser_ws.send_text(json.dumps({"error": "GEMINI_API_KEY not set"}))
+        await browser_ws.close()
+        return
 
-        self.send_text_task = None
-        self.receive_audio_task = None
-        self.play_audio_task = None
+    gemini_url = get_gemini_ws_url(key)
+    setup_message = build_setup_message(model, system_instruction, voice_name)
 
-        self.audio_stream = None
+    try:
+        async with websockets.connect(
+            gemini_url,
+            additional_headers={"Content-Type": "application/json"},
+        ) as gemini_ws:
+            print("🤖 Connected to Gemini Live API")
 
-    async def send_text(self):
-        while True:
-            text = await asyncio.to_thread(
-                input,
-                "message > ",
-            )
-            if text.lower() == "q":
-                break
-            if self.session is not None:
-                await self.session.send(input=text or ".", end_of_turn=True)
+            # 1. Send setup message
+            await gemini_ws.send(json.dumps(setup_message))
+            print("📤 Setup sent to Gemini")
 
-    def _get_frame(self, cap):
-        # Read the frameq
-        ret, frame = cap.read()
-        # Check if the frame was read successfully
-        if not ret:
-            return None
-        # Fix: Convert BGR to RGB color space
-        # OpenCV captures in BGR but PIL expects RGB format
-        # This prevents the blue tint in the video feed
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = PIL.Image.fromarray(frame_rgb)  # Now using RGB frame
-        img.thumbnail([1024, 1024])
+            # Wait for setup confirmation
+            msg = await gemini_ws.recv()
+            data = json.loads(msg)
+            if "setupComplete" in data:
+                print("✅ Gemini setup complete")
 
-        image_io = io.BytesIO()
-        img.save(image_io, format="jpeg")
-        image_io.seek(0)
+            # 2. Forward microphone audio from browser to Gemini
+            async def browser_to_gemini():
+                try:
+                    while True:
+                        raw_pcm = await browser_ws.receive_bytes()
+                        payload = {
+                            "realtimeInput": {
+                                "audio": {
+                                    "mimeType": "audio/pcm;rate=16000",
+                                    "data": base64.b64encode(raw_pcm).decode("utf-8"),
+                                }
+                            }
+                        }
+                        await gemini_ws.send(json.dumps(payload))
+                except Exception:
+                    pass
 
-        mime_type = "image/jpeg"
-        image_bytes = image_io.read()
-        return {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode()}
+            # 3. Forward Gemini response (PCM audio chunks and text) to browser
+            async def gemini_to_browser():
+                try:
+                    async for raw_msg in gemini_ws:
+                        resp = json.loads(raw_msg)
+                        sc = resp.get("serverContent", {})
+                        if not sc:
+                            continue
 
-    async def get_frames(self):
-        # This takes about a second, and will block the whole program
-        # causing the audio pipeline to overflow if you don't to_thread it.
-        cap = await asyncio.to_thread(
-            cv2.VideoCapture, 0
-        )  # 0 represents the default camera
+                        # Model turn parts
+                        model_turn = sc.get("modelTurn", {})
+                        for part in model_turn.get("parts", []):
+                            inline = part.get("inlineData", {})
+                            if inline.get("data"):
+                                audio_bytes = base64.b64decode(inline["data"])
+                                await browser_ws.send_bytes(audio_bytes)
+                            if part.get("text"):
+                                await browser_ws.send_text(
+                                    json.dumps({"text": part["text"]})
+                                )
 
-        while True:
-            frame = await asyncio.to_thread(self._get_frame, cap)
-            if frame is None:
-                break
+                        # Output transcription if available
+                        out_transcription = sc.get("outputTranscription", {})
+                        if out_transcription.get("text"):
+                            await browser_ws.send_text(
+                                json.dumps({"text": out_transcription["text"]})
+                            )
+                except Exception:
+                    pass
 
-            await asyncio.sleep(1.0)
+            await asyncio.gather(browser_to_gemini(), gemini_to_browser())
 
-            if self.out_queue is not None:
-                await self.out_queue.put(frame)
-
-        # Release the VideoCapture object
-        cap.release()
-
-    def _get_screen(self):
+    except Exception as e:
+        print(f"Gemini live session error: {e}")
         try:
-            import mss  # pytype: disable=import-error # pylint: disable=g-import-not-at-top
-        except ImportError as e:
-            raise ImportError("Please install mss package using 'pip install mss'") from e
-        sct = mss.mss()
-        monitor = sct.monitors[0]
-
-        i = sct.grab(monitor)
-
-        mime_type = "image/jpeg"
-        image_bytes = mss.tools.to_png(i.rgb, i.size)
-        img = PIL.Image.open(io.BytesIO(image_bytes))
-
-        image_io = io.BytesIO()
-        img.save(image_io, format="jpeg")
-        image_io.seek(0)
-
-        image_bytes = image_io.read()
-        return {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode()}
-
-    async def get_screen(self):
-
-        while True:
-            frame = await asyncio.to_thread(self._get_screen)
-            if frame is None:
-                break
-
-            await asyncio.sleep(1.0)
-
-            if self.out_queue is not None:
-                await self.out_queue.put(frame)
-
-    async def send_realtime(self):
-        while True:
-            if self.out_queue is not None:
-                msg = await self.out_queue.get()
-                if self.session is not None:
-                    await self.session.send(input=msg)
-
-    async def listen_audio(self):
-        mic_info = pya.get_default_input_device_info()
-        self.audio_stream = await asyncio.to_thread(
-            pya.open,
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SEND_SAMPLE_RATE,
-            input=True,
-            input_device_index=mic_info["index"],
-            frames_per_buffer=CHUNK_SIZE,
-        )
-        if __debug__:
-            kwargs = {"exception_on_overflow": False}
-        else:
-            kwargs = {}
-        while True:
-            data = await asyncio.to_thread(self.audio_stream.read, CHUNK_SIZE, **kwargs)
-            if self.out_queue is not None:
-                await self.out_queue.put({"data": data, "mime_type": "audio/pcm"})
-
-    async def receive_audio(self):
-        "Background task to reads from the websocket and write pcm chunks to the output queue"
-        while True:
-            if self.session is not None:
-                turn = self.session.receive()
-                async for response in turn:
-                    if data := response.data:
-                        self.audio_in_queue.put_nowait(data)
-                        continue
-                    if text := response.text:
-                        print(text, end="")
-
-                # If you interrupt the model, it sends a turn_complete.
-                # For interruptions to work, we need to stop playback.
-                # So empty out the audio queue because it may have loaded
-                # much more audio than has played yet.
-                while not self.audio_in_queue.empty():
-                    self.audio_in_queue.get_nowait()
-
-    async def play_audio(self):
-        stream = await asyncio.to_thread(
-            pya.open,
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RECEIVE_SAMPLE_RATE,
-            output=True,
-        )
-        while True:
-            if self.audio_in_queue is not None:
-                bytestream = await self.audio_in_queue.get()
-                await asyncio.to_thread(stream.write, bytestream)
-
-    async def run(self):
-        try:
-            async with (
-                client.aio.live.connect(model=MODEL, config=CONFIG) as session,
-                asyncio.TaskGroup() as tg,
-            ):
-                self.session = session
-
-                self.audio_in_queue = asyncio.Queue()
-                self.out_queue = asyncio.Queue(maxsize=5)
-
-                send_text_task = tg.create_task(self.send_text())
-                tg.create_task(self.send_realtime())
-                tg.create_task(self.listen_audio())
-                if self.video_mode == "camera":
-                    tg.create_task(self.get_frames())
-                elif self.video_mode == "screen":
-                    tg.create_task(self.get_screen())
-
-                tg.create_task(self.receive_audio())
-                tg.create_task(self.play_audio())
-
-                await send_text_task
-                raise asyncio.CancelledError("User requested exit")
-
-        except asyncio.CancelledError:
+            await browser_ws.close()
+        except Exception:
             pass
-        except ExceptionGroup as EG:
-            if self.audio_stream is not None:
-                self.audio_stream.close()
-                traceback.print_exception(EG)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default=DEFAULT_MODE,
-        help="pixels to stream from",
-        choices=["camera", "screen", "none"],
-    )
-    args = parser.parse_args()
-    main = AudioLoop(video_mode=args.mode)
-    asyncio.run(main.run())
