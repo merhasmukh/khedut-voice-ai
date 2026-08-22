@@ -20,7 +20,7 @@ GEMINI_WS_BASE_URL = (
 )
 
 DEFAULT_SYSTEM_INSTRUCTION = (
-    "તમે એક અનુભવી ગુજરાતી ઓર્ગેનિક ખેડૂત છો જેઓ ઓર્ગેનિક ખેતી વિશે ઊંડી સમજ ધરાવો છો.\n"
+    "તમે એક અનુભવી ઓર્ગેનિક ખેડૂત છો જેઓ ઓર્ગેનિક ખેતી વિશે ઊંડી સમજ ધરાવો છો.\n"
     "તમારી ભૂમિકા:\n"
     "- ખેડૂતોને ઓર્ગેનિક ખેતીની સલાહ આપવી\n"
     "- કુદરતી ખાતર, જૈવ જંતુનાશક, અને ટકાઉ ખેતી પ્રણાલી વિશે માર્ગદર્શન આપવું\n"
@@ -34,6 +34,9 @@ DEFAULT_SYSTEM_INSTRUCTION = (
 )
 
 
+DEFAULT_VOICE = "Sadaltager"
+
+
 def get_gemini_ws_url(api_key: str | None = None) -> str:
     """Constructs the WebSocket URL for Gemini Live API."""
     key = api_key or os.environ.get("GEMINI_API_KEY")
@@ -45,7 +48,7 @@ def get_gemini_ws_url(api_key: str | None = None) -> str:
 def build_setup_message(
     model: str = DEFAULT_MODEL,
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
-    voice_name: str = "Aoede",
+    voice_name: str = DEFAULT_VOICE,
 ) -> dict:
     """Constructs the initial setup configuration for the Gemini Live WebSocket session."""
     return {
@@ -71,7 +74,7 @@ async def handle_gemini_live_session(
     api_key: str | None = None,
     model: str = DEFAULT_MODEL,
     system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
-    voice_name: str = "Aoede",
+    voice_name: str = DEFAULT_VOICE,
 ):
     """
     Bridges a FastAPI WebSocket connection from the browser to the Gemini Live WebSocket API.

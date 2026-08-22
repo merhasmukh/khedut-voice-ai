@@ -165,7 +165,7 @@ HTML = """
   <canvas id="waveform" width="420" height="60"></canvas>
   
   <div class="btn-row">
-    <button id="startBtn">▶ Start વાતચીત</button>
+    <button id="startBtn">વાતચીત શરૂ કરો</button>
     <button id="stopBtn" disabled>■ Stop</button>
   </div>
   
