@@ -1,0 +1,24 @@
+# =============================================================================
+# Khedut Voice AI — Raspberry Pi Minimal Requirements
+# =============================================================================
+# Lightweight dependencies for standalone Voice AI on Raspberry Pi.
+# Excludes heavy video/CV packages (opencv, pillow, mss) and local Qdrant/PDF tools.
+# =============================================================================
+
+# Audio & Voice Playback
+pyaudio
+pygame>=2.5.0
+
+# Gemini Live WebSocket & AI Services
+websockets>=12.0
+google-genai
+python-dotenv
+
+# SQLite Database & Conversation Persistence
+sqlalchemy>=2.0.0
+aiosqlite>=0.20.0
+greenlet>=3.0.0
+
+# Cloud Vector Store (Pinecone) & HTTP Notifications (WhatsApp)
+pinecone>=5.0.0
+httpx>=0.27.0
