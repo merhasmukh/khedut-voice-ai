@@ -7,8 +7,16 @@ Manages collection lifecycle, vector upserts, and similarity searches.
 import os
 import uuid
 from typing import Any, Dict, List, Optional
-from qdrant_client import AsyncQdrantClient, QdrantClient
-from qdrant_client.http import models as qmodels
+
+try:
+    from qdrant_client import AsyncQdrantClient, QdrantClient
+    from qdrant_client.http import models as qmodels
+    QDRANT_INSTALLED = True
+except ImportError:
+    AsyncQdrantClient = None
+    QdrantClient = None
+    qmodels = None
+    QDRANT_INSTALLED = False
 
 from .embeddings import VECTOR_SIZE
 
@@ -24,8 +32,10 @@ _async_client_loop = None
 _sync_client: Optional[QdrantClient] = None
 
 
-def get_qdrant_client() -> AsyncQdrantClient:
+def get_qdrant_client() -> Optional[AsyncQdrantClient]:
     """Get or create AsyncQdrantClient bound to current running event loop."""
+    if not QDRANT_INSTALLED:
+        return None
     global _async_client, _async_client_loop
     try:
         current_loop = asyncio.get_running_loop()
@@ -42,8 +52,10 @@ def get_qdrant_client() -> AsyncQdrantClient:
     return _async_client
 
 
-def get_sync_qdrant_client() -> QdrantClient:
+def get_sync_qdrant_client() -> Optional[QdrantClient]:
     """Get or create singleton sync QdrantClient."""
+    if not QDRANT_INSTALLED:
+        return None
     global _sync_client
     if _sync_client is None:
         _sync_client = QdrantClient(
@@ -56,8 +68,12 @@ def get_sync_qdrant_client() -> QdrantClient:
 
 async def is_qdrant_available() -> bool:
     """Check if Qdrant service is reachable."""
+    if not QDRANT_INSTALLED:
+        return False
     try:
         client = get_qdrant_client()
+        if not client:
+            return False
         collections = await client.get_collections()
         return collections is not None
     except Exception:

@@ -6,15 +6,36 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+import os
 
 from database.connection import init_db, get_db
 from database import crud
 from ai_services.gemini_api import handle_gemini_live_session
-from rag.qdrant_client import init_qdrant_collection, is_qdrant_available, get_collection_stats
 from rag.ingestion import ingest_knowledge_base_directory
 from rag.retriever import retrieve_relevant_knowledge
 
 load_dotenv()
+
+# ── Select active vector backend (Qdrant or Pinecone) ─────────────────────────
+_VECTOR_STORE = os.environ.get("VECTOR_STORE", "qdrant").strip().lower()
+
+if _VECTOR_STORE == "pinecone":
+    from rag.pinecone_client import (
+        is_pinecone_available  as _is_store_available_sync,
+        get_pinecone_stats     as _get_store_stats,
+    )
+    async def _is_store_available():
+        return _is_store_available_sync()
+    async def _get_vector_stats():
+        return _get_store_stats()
+    async def _init_store():
+        pass   # Pinecone index is auto-created on first upsert
+else:
+    from rag.qdrant_client import (
+        init_qdrant_collection as _init_store,
+        is_qdrant_available    as _is_store_available,
+        get_collection_stats   as _get_vector_stats,
+    )
 
 
 # ─── Lifespan ─────────────────────────────────────────────────────────────────
@@ -22,22 +43,26 @@ load_dotenv()
 async def lifespan(app: FastAPI):
     # Initialize SQLite database schema
     await init_db()
-    
-    # Check and initialize Qdrant Vector DB if running
-    if await is_qdrant_available():
-        print("🧠 Qdrant Vector Database detected.")
-        await init_qdrant_collection()
+
+    # Initialize active vector store and sync knowledge base
+    backend_label = "Pinecone ☁️" if _VECTOR_STORE == "pinecone" else "Qdrant 🗄️"
+    if await _is_store_available():
+        print(f"🧠 {backend_label} Vector Database detected.")
+        await _init_store()
         # Automatically sync knowledge base (ingests any new or modified files)
         sync_res = await ingest_knowledge_base_directory("knowledge_base")
         new_files = [f for f, count in sync_res.items() if count > 0]
-        stats = await get_collection_stats()
+        stats = await _get_vector_stats()
         if new_files:
             print(f"🌱 Ingested {len(new_files)} new/updated file(s): {', '.join(new_files)}")
         else:
             print("✨ Knowledge base is up to date.")
-        print(f"📚 Qdrant collection ready with {stats.get('points_count', 0)} knowledge vectors.")
+        print(f"📚 {backend_label} collection ready with {stats.get('points_count', 0)} knowledge vectors.")
     else:
-        print("ℹ️ Qdrant is currently offline. Start Qdrant Docker (docker compose up -d) for RAG features.")
+        if _VECTOR_STORE == "pinecone":
+            print("⚠️  Pinecone unavailable. Check PINECONE_API_KEY in .env.")
+        else:
+            print("ℹ️  Qdrant is offline. Start Qdrant Docker (docker compose up -d) for RAG features.")
 
     print("🚀 Khedut Voice AI backend started.")
     yield
@@ -161,31 +186,50 @@ class RagSearchRequest(BaseModel):
 
 @app.get("/api/rag/status")
 async def rag_status():
-    """Returns Qdrant connection status and vector collection stats."""
-    return await get_collection_stats()
+    """Returns active vector store backend and collection stats."""
+    stats = await _get_vector_stats()
+    stats["vector_store"] = _VECTOR_STORE
+    return stats
 
 
 @app.post("/api/rag/ingest")
 async def rag_ingest():
-    """Trigger ingestion of all supported files in knowledge_base/ into Qdrant."""
-    if not await is_qdrant_available():
-        raise HTTPException(status_code=503, detail="Qdrant service is offline. Start docker container first.")
-    results = await ingest_knowledge_base_directory("knowledge_base")
-    stats = await get_collection_stats()
-    return {"status": "ingested", "files": results, "collection_stats": stats}
+    """
+    Trigger re-ingestion of all files in knowledge_base/ into the active vector store.
+    Works with both Qdrant and Pinecone — no restart needed.
+    """
+    if not await _is_store_available():
+        store_name = "Pinecone" if _VECTOR_STORE == "pinecone" else "Qdrant"
+        raise HTTPException(
+            status_code=503,
+            detail=f"{store_name} is unavailable. Check your configuration."
+        )
+    results = await ingest_knowledge_base_directory("knowledge_base", force=True)
+    stats   = await _get_vector_stats()
+    return {
+        "status":           "ingested",
+        "vector_store":     _VECTOR_STORE,
+        "files":            results,
+        "collection_stats": stats,
+    }
 
 
 @app.post("/api/rag/search")
 async def rag_search(req: RagSearchRequest):
-    """Semantic vector search against Qdrant knowledge base."""
-    if not await is_qdrant_available():
-        raise HTTPException(status_code=503, detail="Qdrant service is offline.")
+    """Semantic vector search against the active knowledge base."""
+    if not await _is_store_available():
+        raise HTTPException(status_code=503, detail="Vector store is unavailable.")
     matches = await retrieve_relevant_knowledge(
         query=req.query,
         crop_filter=req.crop,
         limit=req.limit or 3,
     )
-    return {"query": req.query, "matches_count": len(matches), "results": matches}
+    return {
+        "query":         req.query,
+        "vector_store":  _VECTOR_STORE,
+        "matches_count": len(matches),
+        "results":       matches,
+    }
 
 
 # ─── Experience Audio Endpoint ────────────────────────────────────────────────

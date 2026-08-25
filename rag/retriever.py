@@ -1,14 +1,35 @@
 """
 RAG Retriever for Khedut Voice AI.
-Performs semantic vector search against Qdrant and formats relevant knowledge
-into compact Gujarati context blocks for prompt injection.
+Supports two vector backends — select via .env:
+  VECTOR_STORE=qdrant    (default) → Gemini embeddings + local Qdrant
+  VECTOR_STORE=pinecone            → Gemini embeddings + Pinecone cloud
+
+Both backends use Gemini text-embedding-001 for full Gujarati accuracy.
+Pinecone saves the vectors in the cloud (no Docker / local disk needed).
+
+Falls back to local JSON keyword search if the active backend is unavailable.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Gemini embedding is always used (both Qdrant and Pinecone paths)
 from .embeddings import get_embedding
-from .qdrant_client import is_qdrant_available, search_knowledge
+
+# ── Select active vector backend ──────────────────────────────────────────────
+VECTOR_STORE  = os.environ.get("VECTOR_STORE", "qdrant").strip().lower()
+_USE_PINECONE = VECTOR_STORE == "pinecone"
+
+if _USE_PINECONE:
+    from .pinecone_client import (
+        is_pinecone_available     as _is_pinecone_available_sync,
+        search_knowledge_pinecone as _search_pinecone,
+    )
+else:
+    from .qdrant_client import is_qdrant_available, search_knowledge
+
 
 
 def _search_local_json_knowledge(query: str, limit: int = 3) -> List[Dict[str, Any]]:
@@ -100,13 +121,35 @@ async def retrieve_relevant_knowledge(
     score_threshold: float = 0.50,
 ) -> List[Dict[str, Any]]:
     """
-    Search Qdrant for agricultural knowledge relevant to the user query or crops.
-    Falls back to local JSON search if Qdrant is offline.
+    Search the active vector store for agricultural knowledge.
+    Backend is selected by VECTOR_STORE env var (qdrant | pinecone).
+    Falls back to local JSON search if the backend is unavailable.
     """
     clean_query = query.strip()
     if not clean_query:
         return []
 
+    # ── Pinecone backend ──────────────────────────────────────────────────────
+    if _USE_PINECONE:
+        try:
+            if not _is_pinecone_available_sync():
+                print("⚠️  Pinecone unavailable — falling back to local JSON search")
+                return _search_local_json_knowledge(clean_query, limit=limit)
+            query_vector = await get_embedding(clean_query)
+            matches = _search_pinecone(
+                query_vector=query_vector,
+                limit=limit,
+                score_threshold=score_threshold,
+                crop_filter=crop_filter,
+            )
+            if not matches:
+                return _search_local_json_knowledge(clean_query, limit=limit)
+            return matches
+        except Exception as exc:
+            print(f"⚠️  Pinecone retrieval error — falling back to local search: {exc}")
+            return _search_local_json_knowledge(clean_query, limit=limit)
+
+    # ── Qdrant backend (default) ──────────────────────────────────────────────
     if not await is_qdrant_available():
         return _search_local_json_knowledge(clean_query, limit=limit)
 
@@ -119,11 +162,10 @@ async def retrieve_relevant_knowledge(
             crop_filter=crop_filter,
         )
         if not matches:
-            # Check local fallback if vector search returned nothing
             return _search_local_json_knowledge(clean_query, limit=limit)
         return matches
-    except Exception as e:
-        print(f"⚠️ Vector retrieval fallback to local search: {e}")
+    except Exception as exc:
+        print(f"⚠️  Vector retrieval fallback to local search: {exc}")
         return _search_local_json_knowledge(clean_query, limit=limit)
 
 

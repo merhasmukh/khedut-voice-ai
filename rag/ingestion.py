@@ -4,7 +4,11 @@ Supports loading and chunking from:
 - JSON (.json): Structured Gujarati farming guides, formulas, recipes
 - PDF (.pdf): Official agricultural university guides, organic reports
 - Markdown (.md) & Text (.txt): Documentation and notes
-Generates Gemini embeddings and stores vectors in Qdrant.
+
+Backend is selected by VECTOR_STORE env var:
+  VECTOR_STORE=qdrant    → Gemini embeddings + Qdrant upsert (default)
+  VECTOR_STORE=pinecone  → Pinecone integrated embedding upsert (no local GPU)
+
 Includes automatic incremental file change detection (SHA-256 caching).
 """
 
@@ -14,10 +18,22 @@ import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from pypdf import PdfReader
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+# ── Select active vector backend ──────────────────────────────────────────────
+VECTOR_STORE  = os.environ.get("VECTOR_STORE", "qdrant").strip().lower()
+_USE_PINECONE = VECTOR_STORE == "pinecone"
 
 from .embeddings import get_embeddings_batch
-from .qdrant_client import upsert_documents
+
+if _USE_PINECONE:
+    from .pinecone_client import upsert_documents_pinecone
+else:
+    from .qdrant_client import upsert_documents
 
 
 def get_file_sha256(file_path: Path) -> str:
@@ -30,7 +46,8 @@ def get_file_sha256(file_path: Path) -> str:
 
 
 def _get_cache_path(folder: Path) -> Path:
-    return folder / ".index_cache.json"
+    backend = os.environ.get("VECTOR_STORE", "qdrant").strip().lower()
+    return folder / f".index_cache_{backend}.json"
 
 
 def load_index_cache(cache_path: Path) -> Dict[str, str]:
@@ -240,7 +257,9 @@ def load_text_documents(file_path: Path) -> List[Dict[str, Any]]:
 
 async def ingest_file(file_path: Path | str) -> int:
     """
-    Ingest a single file (.json, .pdf, .md, .txt) into Qdrant.
+    Ingest a single file (.json, .pdf, .md, .txt) into the active vector store.
+    - Pinecone: upserts records directly (Pinecone generates embeddings server-side)
+    - Qdrant:   generates Gemini embeddings locally, then upserts to Qdrant
     Returns the number of chunks successfully stored.
     """
     p = Path(file_path)
@@ -264,12 +283,18 @@ async def ingest_file(file_path: Path | str) -> int:
         print(f"ℹ️ No text extracted from {p.name}")
         return 0
 
-    print(f"📖 Extracted {len(docs)} chunks from {p.name}. Generating Gemini embeddings...")
+    backend = "Pinecone" if _USE_PINECONE else "Qdrant"
+    print(f"📖 Extracted {len(docs)} chunks from {p.name} → generating Gemini embeddings...")
     texts = [d["text"] for d in docs]
     embeddings = await get_embeddings_batch(texts, batch_size=32)
 
-    upserted = await upsert_documents(docs, embeddings)
-    print(f"✅ Successfully indexed {upserted} chunks into Qdrant from {p.name}.")
+    if _USE_PINECONE:
+        upserted = upsert_documents_pinecone(docs, embeddings)
+        print(f"✅ Successfully indexed {upserted} chunks into Pinecone from {p.name}.")
+    else:
+        upserted = await upsert_documents(docs, embeddings)
+        print(f"✅ Successfully indexed {upserted} chunks into Qdrant from {p.name}.")
+
     return upserted
 
 
