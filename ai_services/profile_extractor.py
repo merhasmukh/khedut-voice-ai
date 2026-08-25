@@ -1,27 +1,25 @@
 """
 Profile Extractor — automatically identifies farmer details from conversation text.
-Uses the Gemini non-live API to extract structured profile fields as JSON.
+Uses the Gemini REST API to extract structured profile fields as JSON.
 Runs as a background task after each voice turn completes.
+100% compatible with Python 3.9+ via httpx (no google-genai SDK needed).
 """
 
 import json
 import os
 import re
 from typing import Optional
-from google import genai
-from google.genai import types
+import httpx
 
-_client: Optional[genai.Client] = None
+GEMINI_REST_BASE = "https://generativelanguage.googleapis.com/v1beta"
+EXTRACTION_MODEL = "gemini-3.6-flash"
 
 
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY not set")
-        _client = genai.Client(api_key=api_key)
-    return _client
+def _get_api_key() -> str:
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not key:
+        raise ValueError("GEMINI_API_KEY not set")
+    return key
 
 
 EXTRACTION_PROMPT = """\
@@ -56,9 +54,9 @@ Conversation:
 """
 
 
-async def extract_profile_from_conversation(messages: list[dict]) -> dict:
+async def extract_profile_from_conversation(messages: list) -> dict:
     """
-    Calls Gemini to extract farmer profile fields from recent messages.
+    Calls Gemini REST API to extract farmer profile fields from recent messages.
     Returns a dict of non-null fields found. Returns {} if extraction fails.
     
     messages: list of {"role": "user"|"assistant", "content": "text"}
@@ -81,16 +79,32 @@ async def extract_profile_from_conversation(messages: list[dict]) -> dict:
         return {}
 
     try:
-        client = _get_client()
-        response = await client.aio.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=EXTRACTION_PROMPT + conv_text,
-            config=types.GenerateContentConfig(
-                temperature=0,
-                response_mime_type="application/json",
-            ),
-        )
-        raw = response.text.strip() if response.text else ""
+        api_key = _get_api_key()
+        url = f"{GEMINI_REST_BASE}/models/{EXTRACTION_MODEL}:generateContent?key={api_key}"
+        payload = {
+            "contents": [
+                {"parts": [{"text": EXTRACTION_PROMPT + conv_text}]}
+            ],
+            "generationConfig": {
+                "temperature": 0.0,
+                "responseMimeType": "application/json",
+            },
+        }
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return {}
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            return {}
+
+        raw = parts[0].get("text", "").strip()
         if not raw:
             return {}
 
