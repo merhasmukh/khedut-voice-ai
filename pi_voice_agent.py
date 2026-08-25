@@ -583,7 +583,23 @@ async def run_pi_session(
     except KeyboardInterrupt:
         print("\n\nStopping...")
     except Exception as exc:
-        print(f"\nSession error: {exc}")
+        err_str = str(exc)
+        print(f"\nSession error: {err_str}")
+        if "1008" in err_str or "authentication" in err_str.lower() or "1007" in err_str:
+            print("\n" + "=" * 60)
+            print("🔑 GEMINI API KEY AUTHENTICATION ERROR")
+            print("=" * 60)
+            print("Google rejected the Gemini Live connection due to invalid authentication.")
+            print("\nCommon Causes & Solutions:")
+            print("1. Check your .env file:")
+            print("   Make sure GEMINI_API_KEY is set without quotes or extra spaces:")
+            print("   GEMINI_API_KEY=AIzaSy...")
+            print("2. Google AI Studio Key vs Google Cloud Key:")
+            print("   Gemini Live requires a key from Google AI Studio:")
+            print("   👉 https://aistudio.google.com/app/apikey")
+            print("3. If using Google Cloud Console:")
+            print("   Ensure 'Generative Language API' is enabled and API key has NO HTTP/IP restrictions.")
+            print("=" * 60 + "\n")
     finally:
         shutdown.set()
         mic_q.put(None)

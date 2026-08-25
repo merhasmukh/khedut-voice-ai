@@ -96,7 +96,7 @@ KNOWLEDGE_BASE_TOOL = {
 
 def get_gemini_ws_url(api_key: str | None = None) -> str:
     """Constructs the Gemini Live WebSocket URL."""
-    key = api_key or os.environ.get("GEMINI_API_KEY")
+    key = (api_key or os.environ.get("GEMINI_API_KEY") or "").strip().strip('"').strip("'")
     if not key:
         raise ValueError("GEMINI_API_KEY is not set.")
     return f"{GEMINI_WS_BASE_URL}?key={key}"
