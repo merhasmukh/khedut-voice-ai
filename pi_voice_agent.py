@@ -472,7 +472,7 @@ async def run_pi_session(
             speech_streak = 0
 
             # -----------------------------------------------------------------
-            # Task A: mic -> Gemini  (with Echo Cancellation & Experience Interruption)
+            # Task A: mic -> Gemini  (with Smart Voice Interruption)
             # -----------------------------------------------------------------
             async def mic_to_gemini():
                 nonlocal speech_streak
@@ -481,28 +481,32 @@ async def run_pi_session(
                     if pcm is None:
                         break
 
-                    # 1. While Farmer Experience MP3 is playing:
-                    # Allow user to interrupt the MP3 by speaking
-                    if is_experience_playing():
+                    is_playing = player.is_active() or is_experience_playing()
+
+                    if is_playing:
                         rms = compute_rms(pcm)
                         if rms > vad_threshold:
                             speech_streak += 1
                             if speech_streak >= VAD_STREAK_TRIGGER:
-                                print("\n🎤 User voice detected -> stopping experience audio")
+                                print(f"\n⚡ User interrupted audio (RMS: {int(rms)}) -> stopping playback & listening...")
+                                player.clear()
                                 stop_experience_audio()
                                 speech_streak = 0
+                                # Stream the user's speech chunk directly to Gemini
+                                await gemini_ws.send(json.dumps({
+                                    "realtimeInput": {
+                                        "audio": {
+                                            "mimeType": "audio/pcm;rate=16000",
+                                            "data": base64.b64encode(pcm).decode(),
+                                        }
+                                    }
+                                }))
                         else:
                             speech_streak = max(0, speech_streak - 1)
-                        # Do not stream MP3 audio bleed to Gemini Live while MP3 is playing
+                        # Suppress speaker echo / background noise below threshold during playback
                         continue
 
-                    # 2. While AI is speaking through speaker:
-                    # Do NOT stream mic to Gemini to avoid speaker echo self-interruption
-                    if player.is_active():
-                        speech_streak = 0
-                        continue
-
-                    # 3. Normal Listening Mode: Stream mic audio to Gemini Live
+                    # Idle / Normal Listening Mode: Stream all mic audio to Gemini Live
                     speech_streak = 0
                     await gemini_ws.send(json.dumps({
                         "realtimeInput": {
