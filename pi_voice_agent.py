@@ -52,7 +52,7 @@ from rag.retriever import (
     retrieve_relevant_knowledge,   # Qdrant search + local JSON fallback
     build_rag_context,             # formats results into context string
 )
-from database.connection import AsyncSessionLocal
+from database.connection import AsyncSessionLocal, init_db
 from database import crud
 from ai_services.profile_extractor import extract_profile_from_conversation
 
@@ -393,7 +393,13 @@ async def run_pi_session(
     if session_id is None:
         session_id = str(uuid.uuid4())
 
-    # Build context from DB if a previous session exists
+    # 1. Initialize SQLite database schema if not already initialized
+    try:
+        await init_db()
+    except Exception as exc:
+        print(f"  [DB init] {exc}")
+
+    # 2. Build context from DB if a previous session exists
     full_instruction = BASE_SYSTEM_INSTRUCTION
     try:
         async with AsyncSessionLocal() as db:

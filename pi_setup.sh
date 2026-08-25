@@ -73,8 +73,17 @@ pip install -r requirements-pi.txt --quiet
 echo "      Dependencies installed."
 echo ""
 
-# -- 5. Check .env ------------------------------------------------------------
-echo "[4/4] Checking .env configuration..."
+# -- 5. Initialize SQLite Database -------------------------------------------
+echo "[4/5] Initializing SQLite database (khedut_voice.db)..."
+python -c "
+import asyncio
+from database.connection import init_db
+asyncio.run(init_db())
+"
+echo ""
+
+# -- 6. Check .env ------------------------------------------------------------
+echo "[5/5] Checking .env configuration..."
 if [ ! -f ".env" ]; then
     if [ -f ".env.example" ]; then
         cp .env.example .env
