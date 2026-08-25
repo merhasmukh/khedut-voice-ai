@@ -136,11 +136,10 @@ class AudioPlayer:
     """
 
     def __init__(self, pa: pyaudio.PyAudio, device_index=None):
-        self._buf              = collections.deque()
-        self._lock             = threading.Lock()
-        self._has_data         = False
-        self._last_active_time = 0.0
-        self._stream           = pa.open(
+        self._buf            = collections.deque()
+        self._lock           = threading.Lock()
+        self._last_play_time = 0.0
+        self._stream         = pa.open(
             format=AUDIO_FORMAT,
             channels=SPEAKER_CHANNELS,
             rate=SPEAKER_SAMPLE_RATE,
@@ -163,34 +162,32 @@ class AudioPlayer:
                     self._buf.popleft()
                 else:
                     self._buf[0] = chunk[take:]
-            if self._buf:
-                self._has_data = True
-                self._last_active_time = time.time()
-            else:
-                if self._has_data:
-                    self._last_active_time = time.time()
-                self._has_data = False
+            if out:
+                self._last_play_time = time.time()
         out += b"\x00" * (needed - len(out))   # silence pad
         return (bytes(out), pyaudio.paContinue)
 
     def feed(self, pcm_bytes: bytes):
+        if not pcm_bytes:
+            return
         with self._lock:
             self._buf.append(pcm_bytes)
-            self._has_data = True
-            self._last_active_time = time.time()
+            self._last_play_time = time.time()
+
+    def is_playing(self) -> bool:
+        """Returns True if audio is currently playing or recently finished draining."""
+        with self._lock:
+            if bool(self._buf):
+                return True
+            return (time.time() - self._last_play_time) < 0.4
 
     def is_active(self) -> bool:
-        with self._lock:
-            if self._has_data:
-                return True
-            # Short 0.25s grace period so hardware speaker buffer finishes draining
-            return (time.time() - self._last_active_time) < 0.25
+        return self.is_playing()
 
     def clear(self):
         with self._lock:
             self._buf.clear()
-            self._has_data = False
-            self._last_active_time = 0.0
+            self._last_play_time = 0.0
 
     def close(self):
         try:
@@ -469,10 +466,11 @@ async def run_pi_session(
             else:
                 print(f"Unexpected setup response: {raw[:200]}")
 
-            speech_streak = 0
+            speech_streak  = 0
+            ai_is_speaking = False
 
             # -----------------------------------------------------------------
-            # Task A: mic -> Gemini  (with Default Barge-in Interruption)
+            # Task A: mic -> Gemini  (Clean Half-Duplex Listening)
             # -----------------------------------------------------------------
             async def mic_to_gemini():
                 nonlocal speech_streak
@@ -481,32 +479,27 @@ async def run_pi_session(
                     if pcm is None:
                         break
 
-                    is_playing = player.is_active() or is_experience_playing()
-
-                    if is_playing:
+                    # 1. While Farmer Experience MP3 is playing: allow user to interrupt it
+                    if is_experience_playing():
                         rms = compute_rms(pcm)
                         if rms >= interrupt_threshold:
                             speech_streak += 1
                             if speech_streak >= VAD_STREAK_TRIGGER:
-                                print(f"\n⚡ User interrupted (RMS: {int(rms)}) -> stopping AI and listening...")
-                                player.clear()
+                                print(f"\n⚡ User voice detected (RMS: {int(rms)}) -> stopping experience audio")
                                 stop_experience_audio()
                                 speech_streak = 0
-                                # Stream interrupting voice directly to Gemini Live
-                                await gemini_ws.send(json.dumps({
-                                    "realtimeInput": {
-                                        "audio": {
-                                            "mimeType": "audio/pcm;rate=16000",
-                                            "data": base64.b64encode(pcm).decode(),
-                                        }
-                                    }
-                                }))
                         else:
                             speech_streak = max(0, speech_streak - 1)
-                        # While playing and audio is below user interruption threshold, suppress speaker echo
+                        # Do not stream MP3 sound into Gemini Live
                         continue
 
-                    # Idle / Normal Listening Mode: Stream all mic audio to Gemini Live
+                    # 2. While AI is actively speaking / outputting audio:
+                    # Do NOT stream mic to Gemini so Gemini never receives its own acoustic echo
+                    if ai_is_speaking or player.is_playing():
+                        speech_streak = 0
+                        continue
+
+                    # 3. Idle / Listening to Farmer: Stream mic audio to Gemini Live
                     speech_streak = 0
                     await gemini_ws.send(json.dumps({
                         "realtimeInput": {
@@ -518,9 +511,10 @@ async def run_pi_session(
                     }))
 
             # -----------------------------------------------------------------
-            # Task B: Gemini -> speaker + tool handling  (mirrors web agent)
+            # Task B: Gemini -> speaker + tool handling
             # -----------------------------------------------------------------
             async def gemini_to_speaker():
+                nonlocal ai_is_speaking
                 ai_text_parts = []
 
                 async for raw_msg in gemini_ws:
@@ -531,11 +525,12 @@ async def run_pi_session(
 
                     sc = msg.get("serverContent", {})
 
-                    # -- Interrupted (user spoke while AI was speaking) --------
+                    # -- Interrupted ------------------------------------------
                     if sc.get("interrupted"):
                         print("\nAI interrupted by user.")
                         player.clear()
                         stop_experience_audio()
+                        ai_is_speaking = False
                         partial = "".join(ai_text_parts).strip()
                         ai_text_parts.clear()
                         if partial:
@@ -557,6 +552,7 @@ async def run_pi_session(
                     for part in model_turn.get("parts", []):
                         inline = part.get("inlineData", {})
                         if inline.get("data"):
+                            ai_is_speaking = True
                             player.feed(base64.b64decode(inline["data"]))
                         if part.get("text"):
                             ai_text_parts.append(part["text"])
@@ -573,6 +569,13 @@ async def run_pi_session(
                         full_text = "".join(ai_text_parts).strip()
                         ai_text_parts.clear()
                         print("\n" + "-" * 50)
+
+                        # Wait until all buffered speaker audio finishes playing out loud
+                        while player.is_playing():
+                            await asyncio.sleep(0.08)
+
+                        ai_is_speaking = False
+                        print("🎤 [તમારો પ્રશ્ન પૂછો / Please speak now...]")
 
                         if full_text:
                             asyncio.create_task(
