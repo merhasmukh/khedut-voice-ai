@@ -1,8 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# Khedut Voice AI -- Raspberry Pi Setup Script
+# Khedut Voice AI -- Raspberry Pi Setup Script (Python 3.13)
 # =============================================================================
-# Run this ONCE on your Raspberry Pi to install all dependencies.
+# Installs system audio packages, sets up Python 3.13 environment, and installs
+# lightweight Voice AI dependencies on Raspberry Pi.
+#
 # Usage:  chmod +x pi_setup.sh && ./pi_setup.sh
 # =============================================================================
 
@@ -10,17 +12,33 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+PYTHON_TARGET="3.13"
+PYTHON_BUILD_VER="3.13.2"
+
 echo "=============================================="
-echo "  Khedut Voice AI -- Raspberry Pi Setup"
+echo "  Khedut Voice AI -- Raspberry Pi Setup 🍓"
+echo "  Target Python: Python ${PYTHON_TARGET}"
 echo "=============================================="
 echo ""
 
 # -- 1. System packages -------------------------------------------------------
-echo "[1/5] Installing system packages..."
+echo "[1/5] Installing system audio & build packages..."
 sudo apt-get update -qq
 sudo apt-get install -y \
-    python3-pip \
-    python3-venv \
+    build-essential \
+    zlib1g-dev \
+    libncurses5-dev \
+    libgdbm-dev \
+    libnss3-dev \
+    libssl-dev \
+    libreadline-dev \
+    libffi-dev \
+    libsqlite3-dev \
+    libbz2-dev \
+    liblzma-dev \
+    tk-dev \
+    wget \
+    curl \
     portaudio19-dev \
     libportaudio2 \
     libsdl2-dev \
@@ -33,7 +51,36 @@ sudo apt-get install -y \
 echo "      System packages installed."
 echo ""
 
-# -- 2. Bluetooth speaker help ------------------------------------------------
+# -- 2. Check or install Python 3.13 -------------------------------------------
+echo "[2/5] Checking for Python ${PYTHON_TARGET}..."
+if command -v python3.13 >/dev/null 2>&1; then
+    PY_BIN=$(command -v python3.13)
+    echo "      Found Python 3.13 at: ${PY_BIN}"
+    ${PY_BIN} --version
+else
+    echo "      Python 3.13 not found on system."
+    echo "      Building & installing Python ${PYTHON_BUILD_VER} from source (this takes ~5-10 mins)..."
+    TMP_BUILD_DIR="/tmp/python313_build"
+    mkdir -p "${TMP_BUILD_DIR}"
+    cd "${TMP_BUILD_DIR}"
+    
+    wget -q --show-progress "https://www.python.org/ftp/python/${PYTHON_BUILD_VER}/Python-${PYTHON_BUILD_VER}.tgz"
+    tar -xf "Python-${PYTHON_BUILD_VER}.tgz"
+    cd "Python-${PYTHON_BUILD_VER}"
+    
+    ./configure --enable-optimizations --prefix=/usr/local
+    make -j"$(nproc)"
+    sudo make altinstall
+    
+    cd "$SCRIPT_DIR"
+    rm -rf "${TMP_BUILD_DIR}"
+    
+    PY_BIN="/usr/local/bin/python3.13"
+    echo "      Python ${PYTHON_BUILD_VER} successfully installed at ${PY_BIN}."
+fi
+echo ""
+
+# -- 3. Bluetooth speaker guide -----------------------------------------------
 echo "=============================================="
 echo "  Bluetooth Speaker Pairing Guide"
 echo "=============================================="
@@ -50,30 +97,37 @@ echo "  Then set it as the default audio output:"
 echo "    pactl list sinks short"
 echo "    pactl set-default-sink bluez_sink.XX_XX_XX_XX_XX_XX.a2dp_sink"
 echo ""
-echo "  Press Enter to continue setup..."
-read -r
 
-# -- 3. Python venv -----------------------------------------------------------
-echo "[2/5] Setting up Python virtual environment..."
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-    echo "      Created new venv."
+# -- 4. Python 3.13 virtual environment ---------------------------------------
+echo "[3/5] Setting up Python 3.13 virtual environment..."
+# If existing venv is not Python 3.13, recreate it
+if [ -d "venv" ]; then
+    CURRENT_VENV_PY=$(venv/bin/python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")
+    if [ "${CURRENT_VENV_PY}" != "${PYTHON_TARGET}" ]; then
+        echo "      Existing venv was Python ${CURRENT_VENV_PY}. Recreating with Python ${PYTHON_TARGET}..."
+        rm -rf venv
+        ${PY_BIN} -m venv venv
+    else
+        echo "      Found existing Python 3.13 venv."
+    fi
 else
-    echo "      Found existing venv."
+    ${PY_BIN} -m venv venv
+    echo "      Created new Python 3.13 venv."
 fi
+
 source venv/bin/activate
 pip install --upgrade pip --quiet
-echo "      venv ready."
+echo "      Active venv version: $(python --version)"
 echo ""
 
-# -- 4. Python dependencies ---------------------------------------------------
-echo "[3/5] Installing lightweight Raspberry Pi dependencies..."
+# -- 5. Install Pi dependencies -----------------------------------------------
+echo "[4/5] Installing lightweight Voice AI dependencies (requirements-pi.txt)..."
 pip install -r requirements-pi.txt --quiet
-echo "      Python packages installed."
+echo "      Dependencies installed."
 echo ""
 
-# -- 5. Verify .env -----------------------------------------------------------
-echo "[4/5] Checking .env configuration..."
+# -- 6. Verify .env -----------------------------------------------------------
+echo "[5/5] Checking .env configuration..."
 if [ ! -f ".env" ]; then
     if [ -f ".env.example" ]; then
         cp .env.example .env
@@ -92,8 +146,8 @@ else
 fi
 echo ""
 
-# -- 6. List audio devices ----------------------------------------------------
-echo "[5/5] Available audio devices:"
+# -- Audio devices check ------------------------------------------------------
+echo "Available audio devices:"
 python -c "
 import pyaudio
 pa = pyaudio.PyAudio()
@@ -124,16 +178,12 @@ echo ""
 
 # -- Done ---------------------------------------------------------------------
 echo "=============================================="
-echo "  Setup Complete!"
+echo "  Setup Complete with Python 3.13! 🚀"
 echo "=============================================="
 echo ""
-echo "  Start the Pi voice agent:"
+echo "  Start the always-listening Voice AI:"
 echo "    source venv/bin/activate"
 echo "    python pi_voice_agent.py"
-echo ""
-echo "  Use specific audio devices if needed:"
-echo "    python pi_voice_agent.py --list-devices"
-echo "    python pi_voice_agent.py --input-device 2 --output-device 5"
 echo ""
 echo "  To auto-start on boot (systemd):"
 echo "    sudo cp khedut-voice-pi.service /etc/systemd/system/"
@@ -141,7 +191,4 @@ echo "    sudo sed -i \"s|/home/pi/khedut-voice-ai|$SCRIPT_DIR|g\" /etc/systemd/
 echo "    sudo systemctl daemon-reload"
 echo "    sudo systemctl enable khedut-voice-pi"
 echo "    sudo systemctl start khedut-voice-pi"
-echo ""
-echo "  Run web/browser mode (unchanged):"
-echo "    uvicorn main:app --host 0.0.0.0 --port 8000"
 echo ""
