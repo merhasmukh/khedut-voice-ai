@@ -72,9 +72,9 @@ SPEAKER_SAMPLE_RATE  = 24000   # Gemini Live outputs 24 kHz PCM
 SPEAKER_CHANNELS     = 1
 AUDIO_FORMAT         = pyaudio.paInt16
 
-# -- Voice Activity Detection -------------------------------------------------
-VAD_RMS_THRESHOLD    = 2000    # int16 RMS: user voice threshold for MP3 interruption
-VAD_STREAK_TRIGGER   = 2       # consecutive high-energy frames -> interrupt
+# -- Voice Activity Detection (Barge-in / Interruption) ------------------------
+INTERRUPT_RMS_THRESHOLD = 4500    # int16 RMS: user voice threshold to interrupt during playback
+VAD_STREAK_TRIGGER      = 2       # consecutive frames (~64ms) above threshold to trigger interrupt
 
 # -- Paths --------------------------------------------------------------------
 PROJECT_DIR          = os.path.dirname(os.path.abspath(__file__))
@@ -384,10 +384,10 @@ async def run_pi_session(
     model: str  = DEFAULT_MODEL,
     voice: str  = DEFAULT_VOICE,
     session_id: str | None = None,
-    vad_threshold: int = VAD_RMS_THRESHOLD,
+    interrupt_threshold: int = INTERRUPT_RMS_THRESHOLD,
 ):
     """
-    Full always-listening voice loop for Raspberry Pi.
+    Full always-listening voice loop for Raspberry Pi with default barge-in interruption.
     Uses the same system prompt, tools, RAG, and DB as the web agent.
     """
     if session_id is None:
@@ -472,7 +472,7 @@ async def run_pi_session(
             speech_streak = 0
 
             # -----------------------------------------------------------------
-            # Task A: mic -> Gemini  (with Smart Voice Interruption)
+            # Task A: mic -> Gemini  (with Default Barge-in Interruption)
             # -----------------------------------------------------------------
             async def mic_to_gemini():
                 nonlocal speech_streak
@@ -485,14 +485,14 @@ async def run_pi_session(
 
                     if is_playing:
                         rms = compute_rms(pcm)
-                        if rms > vad_threshold:
+                        if rms >= interrupt_threshold:
                             speech_streak += 1
                             if speech_streak >= VAD_STREAK_TRIGGER:
-                                print(f"\n⚡ User interrupted audio (RMS: {int(rms)}) -> stopping playback & listening...")
+                                print(f"\n⚡ User interrupted (RMS: {int(rms)}) -> stopping AI and listening...")
                                 player.clear()
                                 stop_experience_audio()
                                 speech_streak = 0
-                                # Stream the user's speech chunk directly to Gemini
+                                # Stream interrupting voice directly to Gemini Live
                                 await gemini_ws.send(json.dumps({
                                     "realtimeInput": {
                                         "audio": {
@@ -503,7 +503,7 @@ async def run_pi_session(
                                 }))
                         else:
                             speech_streak = max(0, speech_streak - 1)
-                        # Suppress speaker echo / background noise below threshold during playback
+                        # While playing and audio is below user interruption threshold, suppress speaker echo
                         continue
 
                     # Idle / Normal Listening Mode: Stream all mic audio to Gemini Live
@@ -649,8 +649,8 @@ Web / browser mode (runs independently alongside Pi mode):
     parser.add_argument("--voice",  default=DEFAULT_VOICE)
     parser.add_argument("--session", default=None,
                         help="Resume a previous session ID (optional)")
-    parser.add_argument("--vad-threshold", type=int, default=VAD_RMS_THRESHOLD,
-                        help=f"RMS energy threshold for MP3 voice interruption (default: {VAD_RMS_THRESHOLD})")
+    parser.add_argument("--interrupt-threshold", type=int, default=INTERRUPT_RMS_THRESHOLD,
+                        help=f"RMS energy threshold to interrupt AI playback (default: {INTERRUPT_RMS_THRESHOLD})")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -668,13 +668,14 @@ Web / browser mode (runs independently alongside Pi mode):
     print("=" * 50)
     print("   Khedut Voice AI -- Raspberry Pi Mode")
     print("=" * 50)
-    print(f"  Model        : {args.model}")
-    print(f"  Voice        : {args.voice}")
-    print(f"  Mic          : {'System default' if in_dev  is None else f'Device {in_dev}'}")
-    print(f"  Speaker      : {'System default (Bluetooth if set)' if out_dev is None else f'Device {out_dev}'}")
-    print(f"  VAD Threshold: {args.vad_threshold}")
+    print(f"  Model               : {args.model}")
+    print(f"  Voice               : {args.voice}")
+    print(f"  Mic                 : {'System default' if in_dev  is None else f'Device {in_dev}'}")
+    print(f"  Speaker             : {'System default (Bluetooth if set)' if out_dev is None else f'Device {out_dev}'}")
+    print(f"  Interrupt Threshold : {args.interrupt_threshold}")
+    print(f"  Voice Interruption  : Enabled by default ⚡")
     if args.session:
-        print(f"  Session      : {args.session} (resuming)")
+        print(f"  Session             : {args.session} (resuming)")
     print()
 
     try:
@@ -685,7 +686,7 @@ Web / browser mode (runs independently alongside Pi mode):
             model=args.model,
             voice=args.voice,
             session_id=args.session,
-            vad_threshold=args.vad_threshold,
+            interrupt_threshold=args.interrupt_threshold,
         ))
     except KeyboardInterrupt:
         print("\nGoodbye!")
