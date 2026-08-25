@@ -67,8 +67,8 @@ echo "      venv ready."
 echo ""
 
 # -- 4. Python dependencies ---------------------------------------------------
-echo "[3/5] Installing Python dependencies..."
-pip install -r requirements.txt --quiet
+echo "[3/5] Installing lightweight Raspberry Pi dependencies..."
+pip install -r requirements-pi.txt --quiet
 echo "      Python packages installed."
 echo ""
 
