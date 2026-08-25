@@ -4,6 +4,8 @@ Connects to Qdrant running via Docker (localhost:6333).
 Manages collection lifecycle, vector upserts, and similarity searches.
 """
 
+from __future__ import annotations
+
 import os
 import uuid
 from typing import Any, Dict, List, Optional

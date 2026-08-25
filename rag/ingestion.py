@@ -12,12 +12,14 @@ Backend is selected by VECTOR_STORE env var:
 Includes automatic incremental file change detection (SHA-256 caching).
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from pypdf import PdfReader

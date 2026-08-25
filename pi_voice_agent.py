@@ -1,31 +1,5 @@
 #!/usr/bin/env python3
-"""
-Khedut Voice AI — Raspberry Pi Standalone Agent
-================================================
-Always-listening voice AI for Raspberry Pi.
-Uses ALL the same prompts, tools, knowledge base, and DB logic as the web agent.
-
-  * USB microphone input   (PyAudio, 16 kHz mono PCM)
-  * Bluetooth speaker out  (PyAudio, 24 kHz via system default sink)
-  * Gemini Live API        (cloud WebSocket — identical setup as web mode)
-  * RAG knowledge base     (same Qdrant + local JSON fallback as web mode)
-  * Farmer experience MP3  (pygame — local playback instead of browser audio)
-  * Voice Activity Detection: user speaks -> experience audio stops instantly
-
-Usage:
-  python pi_voice_agent.py                     # Start always-listening agent
-  python pi_voice_agent.py --list-devices      # List audio I/O devices
-  python pi_voice_agent.py --input-device 2    # Use device index 2 as mic
-  python pi_voice_agent.py --output-device 5   # Use device index 5 as speaker
-
-Bluetooth Speaker Setup (Raspberry Pi):
-  1. bluetoothctl -> power on -> scan on -> pair XX:XX -> connect XX:XX -> trust XX:XX
-  2. Set as default: pactl set-default-sink bluez_sink.XX_XX_XX_XX_XX_XX.a2dp_sink
-  3. Leave --output-device unset: the system default sink is used automatically.
-
-Web / browser mode (unchanged — runs side-by-side):
-  uvicorn main:app --host 0.0.0.0 --port 8000
-"""
+from __future__ import annotations
 
 import argparse
 import asyncio
@@ -99,7 +73,7 @@ SPEAKER_CHANNELS     = 1
 AUDIO_FORMAT         = pyaudio.paInt16
 
 # -- Voice Activity Detection -------------------------------------------------
-VAD_RMS_THRESHOLD    = 850     # int16 RMS: above this = user is speaking
+VAD_RMS_THRESHOLD    = 2000    # int16 RMS: user voice threshold for MP3 interruption
 VAD_STREAK_TRIGGER   = 2       # consecutive high-energy frames -> interrupt
 
 # -- Paths --------------------------------------------------------------------
@@ -162,10 +136,11 @@ class AudioPlayer:
     """
 
     def __init__(self, pa: pyaudio.PyAudio, device_index=None):
-        self._buf      = collections.deque()
-        self._lock     = threading.Lock()
-        self._has_data = False
-        self._stream   = pa.open(
+        self._buf              = collections.deque()
+        self._lock             = threading.Lock()
+        self._has_data         = False
+        self._last_active_time = 0.0
+        self._stream           = pa.open(
             format=AUDIO_FORMAT,
             channels=SPEAKER_CHANNELS,
             rate=SPEAKER_SAMPLE_RATE,
@@ -188,7 +163,13 @@ class AudioPlayer:
                     self._buf.popleft()
                 else:
                     self._buf[0] = chunk[take:]
-            self._has_data = bool(self._buf)
+            if self._buf:
+                self._has_data = True
+                self._last_active_time = time.time()
+            else:
+                if self._has_data:
+                    self._last_active_time = time.time()
+                self._has_data = False
         out += b"\x00" * (needed - len(out))   # silence pad
         return (bytes(out), pyaudio.paContinue)
 
@@ -196,15 +177,20 @@ class AudioPlayer:
         with self._lock:
             self._buf.append(pcm_bytes)
             self._has_data = True
+            self._last_active_time = time.time()
 
     def is_active(self) -> bool:
         with self._lock:
-            return self._has_data
+            if self._has_data:
+                return True
+            # Short 0.25s grace period so hardware speaker buffer finishes draining
+            return (time.time() - self._last_active_time) < 0.25
 
     def clear(self):
         with self._lock:
             self._buf.clear()
             self._has_data = False
+            self._last_active_time = 0.0
 
     def close(self):
         try:
@@ -398,6 +384,7 @@ async def run_pi_session(
     model: str  = DEFAULT_MODEL,
     voice: str  = DEFAULT_VOICE,
     session_id: str | None = None,
+    vad_threshold: int = VAD_RMS_THRESHOLD,
 ):
     """
     Full always-listening voice loop for Raspberry Pi.
@@ -479,7 +466,7 @@ async def run_pi_session(
             speech_streak = 0
 
             # -----------------------------------------------------------------
-            # Task A: mic -> Gemini  (with VAD interruption)
+            # Task A: mic -> Gemini  (with Echo Cancellation & Experience Interruption)
             # -----------------------------------------------------------------
             async def mic_to_gemini():
                 nonlocal speech_streak
@@ -488,21 +475,29 @@ async def run_pi_session(
                     if pcm is None:
                         break
 
-                    # VAD: stop speaker/experience audio on voice detection
-                    if player.is_active() or is_experience_playing():
+                    # 1. While Farmer Experience MP3 is playing:
+                    # Allow user to interrupt the MP3 by speaking
+                    if is_experience_playing():
                         rms = compute_rms(pcm)
-                        if rms > VAD_RMS_THRESHOLD:
+                        if rms > vad_threshold:
                             speech_streak += 1
                             if speech_streak >= VAD_STREAK_TRIGGER:
-                                print("Voice detected -- stopping audio")
-                                player.clear()
+                                print("\n🎤 User voice detected -> stopping experience audio")
                                 stop_experience_audio()
                                 speech_streak = 0
                         else:
                             speech_streak = max(0, speech_streak - 1)
-                    else:
-                        speech_streak = 0
+                        # Do not stream MP3 audio bleed to Gemini Live while MP3 is playing
+                        continue
 
+                    # 2. While AI is speaking through speaker:
+                    # Do NOT stream mic to Gemini to avoid speaker echo self-interruption
+                    if player.is_active():
+                        speech_streak = 0
+                        continue
+
+                    # 3. Normal Listening Mode: Stream mic audio to Gemini Live
+                    speech_streak = 0
                     await gemini_ws.send(json.dumps({
                         "realtimeInput": {
                             "audio": {
@@ -628,6 +623,8 @@ Web / browser mode (runs independently alongside Pi mode):
     parser.add_argument("--voice",  default=DEFAULT_VOICE)
     parser.add_argument("--session", default=None,
                         help="Resume a previous session ID (optional)")
+    parser.add_argument("--vad-threshold", type=int, default=VAD_RMS_THRESHOLD,
+                        help=f"RMS energy threshold for MP3 voice interruption (default: {VAD_RMS_THRESHOLD})")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -645,12 +642,13 @@ Web / browser mode (runs independently alongside Pi mode):
     print("=" * 50)
     print("   Khedut Voice AI -- Raspberry Pi Mode")
     print("=" * 50)
-    print(f"  Model  : {args.model}")
-    print(f"  Voice  : {args.voice}")
-    print(f"  Mic    : {'System default' if in_dev  is None else f'Device {in_dev}'}")
-    print(f"  Speaker: {'System default (Bluetooth if set)' if out_dev is None else f'Device {out_dev}'}")
+    print(f"  Model        : {args.model}")
+    print(f"  Voice        : {args.voice}")
+    print(f"  Mic          : {'System default' if in_dev  is None else f'Device {in_dev}'}")
+    print(f"  Speaker      : {'System default (Bluetooth if set)' if out_dev is None else f'Device {out_dev}'}")
+    print(f"  VAD Threshold: {args.vad_threshold}")
     if args.session:
-        print(f"  Session: {args.session} (resuming)")
+        print(f"  Session      : {args.session} (resuming)")
     print()
 
     try:
@@ -661,6 +659,7 @@ Web / browser mode (runs independently alongside Pi mode):
             model=args.model,
             voice=args.voice,
             session_id=args.session,
+            vad_threshold=args.vad_threshold,
         ))
     except KeyboardInterrupt:
         print("\nGoodbye!")

@@ -3,6 +3,8 @@ CRUD operations and prompt context builder for Khedut Voice AI.
 Farmer profile is populated automatically from conversation — never pre-set with fake data.
 """
 
+from __future__ import annotations
+
 import uuid
 from typing import List, Optional
 from sqlalchemy import select, desc

@@ -5,9 +5,14 @@ Native support for Gujarati, Hindi, and English text.
 100% compatible with Python 3.9+ via direct httpx REST calls.
 """
 
+from __future__ import annotations
+
 import os
 from typing import List, Optional
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 EMBEDDING_MODEL = "gemini-embedding-001"
 VECTOR_SIZE = 768

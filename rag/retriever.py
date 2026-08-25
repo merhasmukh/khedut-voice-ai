@@ -10,6 +10,8 @@ Pinecone saves the vectors in the cloud (no Docker / local disk needed).
 Falls back to local JSON keyword search if the active backend is unavailable.
 """
 
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path

@@ -2,6 +2,8 @@
 Async SQLite Database Connection using SQLAlchemy 2.0 and aiosqlite.
 """
 
+from __future__ import annotations
+
 import os
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession

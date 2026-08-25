@@ -4,11 +4,13 @@ Gemini Live Realtime Voice AI Service
 - Farmer profile auto-extracted from conversation and persisted in SQLite
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
 import os
-from typing import Optional
+from typing import Optional, Union
 
 import websockets
 from dotenv import load_dotenv

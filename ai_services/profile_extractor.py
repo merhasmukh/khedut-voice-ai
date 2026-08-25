@@ -5,6 +5,8 @@ Runs as a background task after each voice turn completes.
 100% compatible with Python 3.9+ via httpx (no google-genai SDK needed).
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re

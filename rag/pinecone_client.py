@@ -24,6 +24,8 @@ Index dimension: 768  (matches Gemini text-embedding-001)
 Distance metric: cosine
 """
 
+from __future__ import annotations
+
 import os
 from typing import Any, Dict, List, Optional
 
