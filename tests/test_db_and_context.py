@@ -20,15 +20,18 @@ async def run_tests():
 
     async with AsyncSessionLocal() as db:
         print("🧪 [2/5] Testing FarmerProfile CRUD...")
-        profile = await crud.get_or_create_default_profile(db)
-        assert profile is not None, "Profile should not be None"
-        assert profile.id is not None, "Profile ID should be set"
-        print(f"   ✓ Default profile created/retrieved: {profile.name} ({profile.village}, {profile.district})")
+        test_profile = FarmerProfile()
+        db.add(test_profile)
+        await db.commit()
+        await db.refresh(test_profile)
+        assert test_profile is not None, "Profile should not be None"
+        assert test_profile.id is not None, "Profile ID should be set"
+        print(f"   ✓ Test profile created with ID: {test_profile.id}")
 
         # Update profile
         updated_profile = await crud.update_farmer_profile(
             db,
-            profile.id,
+            test_profile.id,
             {"village": "ગોંડલ", "land_acres": 8.5, "crops": ["કપાસ", "મગફળી", "સોયાબીન", "તલ"]},
         )
         assert updated_profile.village == "ગોંડલ"
@@ -42,12 +45,19 @@ async def run_tests():
         assert conv.id is not None
         print(f"   ✓ Conversation created: {conv.id} ('{conv.title}')")
 
+        # Update this conversation's specific profile
+        await crud.update_farmer_profile(
+            db,
+            conv.farmer_id,
+            {"village": "ગોંડલ", "land_acres": 8.5, "crops": ["કપાસ", "મગફળી", "સોયાબીન", "તલ"]},
+        )
+
         # Add message turns
         msg1 = await crud.add_message(
             db,
             conversation_id=conv.id,
             role="user",
-            content="મારા કપાસમાં ગુલાબી ઈયળ આવી છે, ઓર્ગેનિક ઉપાય શું કરવો?",
+            content="મારા કપાસમાં ગુલાબી ઈયળ આવી છે, પ્રાકૃતિક ઉપાય શું કરવો?",
         )
         assert msg1.id is not None
         assert msg1.role == "user"
@@ -80,10 +90,16 @@ async def run_tests():
         print("   ...")
         print("   -------------------------------------------------------")
 
-        print("🧪 [5/5] Testing Conversation Listing...")
+        print("🧪 [5/5] Testing Conversation Listing and Cleanup...")
         all_convs = await crud.list_conversations(db)
         assert len(all_convs) >= 1
         print(f"   ✓ Listed {len(all_convs)} conversations from database")
+
+        # Clean up test conversation and test profile so database remains pristine
+        await crud.delete_conversation(db, conv.id)
+        await db.delete(test_profile)
+        await db.commit()
+        print("   ✓ Cleaned up test session and test profile from database")
 
     print("\n🎉 ALL TESTS PASSED SUCCESSFULLY!")
 

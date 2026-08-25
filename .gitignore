@@ -62,6 +62,7 @@ db.sqlite3
 db.sqlite3-journal
 *.db
 *.db-journal
+qdrant_storage/
 
 # Flask stuff:
 instance/

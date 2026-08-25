@@ -9,3 +9,5 @@ python-dotenv
 sqlalchemy>=2.0.0
 aiosqlite>=0.20.0
 greenlet>=3.0.0
+qdrant-client>=1.9.0
+pypdf>=4.0.0

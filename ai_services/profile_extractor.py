@@ -25,25 +25,32 @@ def _get_client() -> genai.Client:
 
 
 EXTRACTION_PROMPT = """\
-Read this conversation between a farmer and an AI farming assistant in Gujarati.
-Extract any personal farming details the farmer revealed about themselves.
+You are analyzing a dialogue between a Gujarati farmer (ખેડૂત) and an AI farming assistant.
+Your goal is to extract personal farming profile details that the FARMER (ખેડૂત) EXPLICITLY and CLEARLY stated about themselves.
 
-Return a JSON object with ONLY the fields you are confident about from the conversation.
-Omit any field you are not sure about — do not guess or assume anything.
+STRICT EXTRACTION RULES:
+1. Extract details ONLY from what the FARMER (ખેડૂત) said in their own messages. NEVER extract or guess anything from the AI's messages.
+2. "name": Extract the farmer's personal name ONLY if the farmer explicitly introduced themselves (e.g., "મારું નામ રમેશભાઈ છે" or "હું મુકેશભાઈ બોલું છું").
+   - NEVER extract greetings, titles, or names said by the AI (e.g. "મિની", "મિનીબેન", "ભાઈ", "બેન", "મિત્ર").
+   - If the farmer did not introduce themselves explicitly, "name" MUST be null.
+3. "village" and "district": Extract ONLY if the farmer explicitly mentioned their own village, town, or district.
+4. "crops": Extract ONLY if the farmer explicitly mentioned the crops they grow or own.
+5. "land_acres": Extract ONLY if the farmer mentioned their farm size (convert bigha/hectare to acres if needed).
+6. If you are not 100% certain that the farmer stated it, set the field to null. DO NOT guess or assume.
 
-Fields to extract (use null if not mentioned):
+JSON Output Format (use null for any unmentioned field):
 {
-  "name": "farmer's name if they said their name, else null",
-  "village": "village name if mentioned, else null",
-  "district": "district/taluka if mentioned, else null",
-  "land_acres": a number if land size was mentioned in acres/bigha/hectare (convert to acres), else null,
-  "crops": ["list", "of", "crops"] mentioned by the farmer as their current crops, else null,
-  "soil_type": "soil type if described (e.g. black, sandy, loamy), else null",
-  "farming_type": "e.g. organic, natural, chemical, mixed — if mentioned, else null",
-  "notes": "any other specific farming detail worth remembering, else null"
+  "name": "farmer's name if explicitly stated by farmer, else null",
+  "village": "village name if stated by farmer, else null",
+  "district": "district name if stated by farmer, else null",
+  "land_acres": number or null,
+  "crops": ["crop1", "crop2"] or null,
+  "soil_type": "soil type or null",
+  "farming_type": "farming type or null",
+  "notes": "specific note or null"
 }
 
-Return ONLY valid JSON — no explanation, no markdown, no extra text.
+Return ONLY valid JSON.
 
 Conversation:
 """
@@ -59,7 +66,12 @@ async def extract_profile_from_conversation(messages: list[dict]) -> dict:
     if not messages:
         return {}
 
-    # Build conversation text
+    # Must contain at least one user message
+    user_msgs = [m for m in messages if m.get("role") == "user" and m.get("content", "").strip()]
+    if not user_msgs:
+        return {}
+
+    # Build conversation text clearly labeling farmer vs assistant
     conv_text = "\n".join(
         f"{'ખેડૂત' if m['role'] == 'user' else 'AI'}: {m['content']}"
         for m in messages
