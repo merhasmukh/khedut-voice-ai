@@ -308,6 +308,13 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> None:
     """
     fn_responses = []
 
+async def _handle_tool_calls(gemini_ws, fn_calls: list) -> str | None:
+    """
+    Execute tool calls and return any queued experience audio URL to play AFTER AI finishes speaking.
+    """
+    pending_audio = None
+    fn_responses = []
+
     for call in fn_calls:
         fn_name  = call.get("name", "")
         fn_args  = call.get("args", {})
@@ -324,10 +331,10 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> None:
                         f"- [{m.get('title', '')}]: {m.get('text', '')}"
                         for m in matches
                     ])
-                    # If a result has an audio experience, auto-play it on Pi
+                    # If a result has an audio experience, queue it to play AFTER AI introduction
                     for m in matches:
-                        if m.get("audio_url") and not is_experience_playing():
-                            play_experience_audio(m["audio_url"])
+                        if m.get("audio_url"):
+                            pending_audio = m["audio_url"]
                             break
                 else:
                     results_text = "આ વિષય પર કોઈ ચોક્કસ માહિતી મળી નથી."
@@ -345,20 +352,20 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> None:
 
         # ── Tool: play_farmer_experience_audio ────────────────────────────────
         elif fn_name == "play_farmer_experience_audio":
-            farmer_name     = fn_args.get("farmer_name")  or "હસમુખભાઈ પટેલ"
-            district        = fn_args.get("district")     or "વલસાડ"
-            audio_url       = fn_args.get("audio_url")    or "/api/experiences/audio/valsad_asmukhbhai_experience.mp3"
+            farmer_name      = fn_args.get("farmer_name")  or "હસમુખભાઈ પટેલ"
+            district         = fn_args.get("district")     or "વલસાડ"
+            audio_url        = fn_args.get("audio_url")    or "/api/experiences/audio/valsad_asmukhbhai_experience.mp3"
             experience_years = fn_args.get("experience_years") or "૫ વર્ષ"
 
-            print(f"Experience audio: {farmer_name} ({district}) [{experience_years}]")
-            play_experience_audio(audio_url)
+            print(f"Queued experience audio: {farmer_name} ({district}) [{experience_years}]")
+            pending_audio = audio_url
 
             fn_responses.append({
                 "response": {
                     "name": fn_name,
                     "content": {
-                        "status":  "playing",
-                        "message": f"{farmer_name} ({district}) નો ઓડિયો અનુભવ પ્લે થઈ રહ્યો છે.",
+                        "status":  "queued",
+                        "message": f"{farmer_name} ({district}) નો ઓડિયો અનુભવ AI બોલવાનું પૂરું કરે પછી શરૂ થશે.",
                     },
                 },
                 "id": call_id,
@@ -368,6 +375,8 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> None:
         await gemini_ws.send(json.dumps({
             "toolResponse": {"functionResponses": fn_responses}
         }))
+
+    return pending_audio
 
 
 # =============================================================================
@@ -516,6 +525,7 @@ async def run_pi_session(
             async def gemini_to_speaker():
                 nonlocal ai_is_speaking
                 ai_text_parts = []
+                queued_experience_audio = None
 
                 async for raw_msg in gemini_ws:
                     try:
@@ -531,6 +541,7 @@ async def run_pi_session(
                         player.clear()
                         stop_experience_audio()
                         ai_is_speaking = False
+                        queued_experience_audio = None
                         partial = "".join(ai_text_parts).strip()
                         ai_text_parts.clear()
                         if partial:
@@ -545,7 +556,9 @@ async def run_pi_session(
                     if tool_call:
                         fn_calls = tool_call.get("functionCalls", [])
                         if fn_calls:
-                            await _handle_tool_calls(gemini_ws, fn_calls)
+                            new_audio = await _handle_tool_calls(gemini_ws, fn_calls)
+                            if new_audio:
+                                queued_experience_audio = new_audio
 
                     # -- PCM audio -> speaker ---------------------------------
                     model_turn = sc.get("modelTurn", {})
@@ -575,7 +588,15 @@ async def run_pi_session(
                             await asyncio.sleep(0.08)
 
                         ai_is_speaking = False
-                        print("🎤 [તમારો પ્રશ્ન પૂછો / Please speak now...]")
+
+                        # If an experience audio was queued by tools, play it NOW after AI speech finishes!
+                        if queued_experience_audio:
+                            audio_to_play = queued_experience_audio
+                            queued_experience_audio = None
+                            print(f"\n▶️ [AI બોલી લીધું છે. હવે ખેડૂત અનુભવ ઓડિયો શરૂ થઈ રહ્યો છે...]")
+                            play_experience_audio(audio_to_play)
+                        else:
+                            print("🎤 [તમારો પ્રશ્ન પૂછો / Please speak now...]")
 
                         if full_text:
                             asyncio.create_task(
