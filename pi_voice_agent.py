@@ -497,190 +497,214 @@ async def run_pi_session(
     mic_stream.start_stream()
     print("Microphone open -- always listening...\n")
 
-    # Reuse the exact same Gemini URL + setup message as the web agent
-    url       = get_gemini_ws_url(api_key)
-    setup_msg = build_setup_message(model, full_instruction, voice)
-
     loop = asyncio.get_event_loop()
 
+    # ── Pre-warm the embedding HTTP client in background ──────────────────────
+    # Pays the TLS connection cost before farmer speaks so first RAG is fast.
+    async def _warmup_embedding():
+        try:
+            from rag.embeddings import get_embedding
+            await get_embedding("warmup")
+            print("✅ Embedding client warmed up.")
+        except Exception:
+            pass
+    asyncio.create_task(_warmup_embedding())
+
+    # ── Reconnect loop — keeps mic open, only restarts the WebSocket ──────────
+    reconnect_delay = 3   # seconds between reconnect attempts
+    attempt = 0
+
     try:
-        async with websockets.connect(
-            url,
-            open_timeout=30,
-            close_timeout=15,
-            ping_interval=20,
-            ping_timeout=20,
-            max_size=None,
-        ) as gemini_ws:
-            print("Gemini Live connected!")
+        while True:
+            attempt += 1
+            url       = get_gemini_ws_url(api_key)
+            setup_msg = build_setup_message(model, full_instruction, voice)
 
-            # Handshake
-            await gemini_ws.send(json.dumps(setup_msg))
-            raw = await asyncio.wait_for(gemini_ws.recv(), timeout=15.0)
-            if "setupComplete" in json.loads(raw):
-                print("Setup complete. Speak now!\n" + "-" * 50)
-            else:
-                print(f"Unexpected setup response: {raw[:200]}")
+            try:
+                print(f"\n🔗 Connecting to Gemini Live (attempt {attempt})...")
+                async with websockets.connect(
+                    url,
+                    open_timeout=30,
+                    close_timeout=5,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    max_size=None,
+                ) as gemini_ws:
+                    print("Gemini Live connected!")
+                    attempt = 0   # reset counter on successful connect
 
-            speech_streak  = 0
-            ai_is_speaking = False
+                    # Handshake
+                    await gemini_ws.send(json.dumps(setup_msg))
+                    raw = await asyncio.wait_for(gemini_ws.recv(), timeout=15.0)
+                    if "setupComplete" in json.loads(raw):
+                        print("Setup complete. Gemini is ready.\n" + "-" * 50)
+                    else:
+                        print(f"Unexpected setup response: {raw[:200]}")
 
-            # -----------------------------------------------------------------
-            # Task A: mic -> Gemini  (Clean Half-Duplex Listening)
-            # -----------------------------------------------------------------
-            async def mic_to_gemini():
-                nonlocal speech_streak
-                while True:
-                    pcm = await loop.run_in_executor(None, mic_q.get)
-                    if pcm is None:
-                        break
-
-                    # 1. While Farmer Experience MP3 is playing: allow user to interrupt it
-                    if is_experience_playing():
-                        rms = compute_rms(pcm)
-                        if rms >= interrupt_threshold:
-                            speech_streak += 1
-                            if speech_streak >= VAD_STREAK_TRIGGER:
-                                print(f"\n⚡ User voice detected (RMS: {int(rms)}) -> stopping experience audio")
-                                stop_experience_audio()
-                                speech_streak = 0
-                        else:
-                            speech_streak = max(0, speech_streak - 1)
-                        # Do not stream MP3 sound into Gemini Live
-                        continue
-
-                    # 2. While AI is actively speaking / outputting audio:
-                    # Do NOT stream mic to Gemini so Gemini never receives its own acoustic echo
-                    if ai_is_speaking or player.is_playing():
-                        speech_streak = 0
-                        continue
-
-                    # 3. Idle / Listening to Farmer: resample 44100→16000 then stream to Gemini Live
-                    speech_streak = 0
-                    # Downsample from capture rate to Gemini's expected 16 kHz
-                    pcm_16k, _ = audioop.ratecv(
-                        pcm, 2, MIC_CHANNELS,
-                        MIC_CAPTURE_RATE, GEMINI_INPUT_RATE,
-                        None
-                    )
+                    # ── Proactive greeting ─────────────────────────────────────
+                    # Triggers Gemini to say "રામ રામ, કેમ છો?" immediately on
+                    # connect — warms up the round-trip so first real answer is fast.
                     await gemini_ws.send(json.dumps({
-                        "realtimeInput": {
-                            "audio": {
-                                "mimeType": "audio/pcm;rate=16000",
-                                "data": base64.b64encode(pcm_16k).decode(),
-                            }
+                        "clientContent": {
+                            "turns": [{"role": "user", "parts": [{"text": "start"}]}],
+                            "turnComplete": True
                         }
                     }))
+                    print("🎙️ Greeting triggered — Gemini is introducing itself.")
 
-            # -----------------------------------------------------------------
-            # Task B: Gemini -> speaker + tool handling
-            # -----------------------------------------------------------------
-            async def gemini_to_speaker():
-                nonlocal ai_is_speaking
-                ai_text_parts = []
-                queued_experience_audio = None
+                    speech_streak  = 0
+                    ai_is_speaking = False
 
-                async for raw_msg in gemini_ws:
-                    try:
-                        msg = json.loads(raw_msg)
-                    except Exception:
-                        continue
+                    # ---------------------------------------------------------
+                    # Task A: mic -> Gemini
+                    # ---------------------------------------------------------
+                    async def mic_to_gemini():
+                        nonlocal speech_streak
+                        while True:
+                            pcm = await loop.run_in_executor(None, mic_q.get)
+                            if pcm is None:
+                                break
 
-                    sc = msg.get("serverContent", {})
+                            if is_experience_playing():
+                                rms = compute_rms(pcm)
+                                if rms >= interrupt_threshold:
+                                    speech_streak += 1
+                                    if speech_streak >= VAD_STREAK_TRIGGER:
+                                        print(f"\n⚡ User voice detected (RMS: {int(rms)}) -> stopping experience audio")
+                                        stop_experience_audio()
+                                        speech_streak = 0
+                                else:
+                                    speech_streak = max(0, speech_streak - 1)
+                                continue
 
-                    # -- Interrupted ------------------------------------------
-                    if sc.get("interrupted"):
-                        print("\nAI interrupted by user.")
-                        player.clear()
-                        stop_experience_audio()
-                        ai_is_speaking = False
+                            if ai_is_speaking or player.is_playing():
+                                speech_streak = 0
+                                continue
+
+                            speech_streak = 0
+                            pcm_16k, _ = audioop.ratecv(
+                                pcm, 2, MIC_CHANNELS,
+                                MIC_CAPTURE_RATE, GEMINI_INPUT_RATE,
+                                None
+                            )
+                            await gemini_ws.send(json.dumps({
+                                "realtimeInput": {
+                                    "audio": {
+                                        "mimeType": "audio/pcm;rate=16000",
+                                        "data": base64.b64encode(pcm_16k).decode(),
+                                    }
+                                }
+                            }))
+
+                    # ---------------------------------------------------------
+                    # Task B: Gemini -> speaker + tool handling
+                    # ---------------------------------------------------------
+                    async def gemini_to_speaker():
+                        nonlocal ai_is_speaking
+                        ai_text_parts = []
                         queued_experience_audio = None
-                        partial = "".join(ai_text_parts).strip()
-                        ai_text_parts.clear()
-                        if partial:
-                            asyncio.create_task(
-                                _persist_message(session_id, "assistant",
-                                                 f"{partial} ... [અટકાવેલ]")
-                            )
-                        continue
 
-                    # -- Tool calls -------------------------------------------
-                    tool_call = msg.get("toolCall") or sc.get("toolCall")
-                    if tool_call:
-                        fn_calls = tool_call.get("functionCalls", [])
-                        if fn_calls:
-                            new_audio = await _handle_tool_calls(gemini_ws, fn_calls)
-                            if new_audio:
-                                queued_experience_audio = new_audio
+                        async for raw_msg in gemini_ws:
+                            try:
+                                msg = json.loads(raw_msg)
+                            except Exception:
+                                continue
 
-                    # -- PCM audio -> speaker ---------------------------------
-                    model_turn = sc.get("modelTurn", {})
-                    for part in model_turn.get("parts", []):
-                        inline = part.get("inlineData", {})
-                        if inline.get("data"):
-                            ai_is_speaking = True
-                            player.feed(base64.b64decode(inline["data"]))
-                        if part.get("text"):
-                            ai_text_parts.append(part["text"])
-                            print(f"AI: {part['text']}", end="", flush=True)
+                            sc = msg.get("serverContent", {})
 
-                    # -- Output transcription ---------------------------------
-                    out_tr = sc.get("outputTranscription", {})
-                    if out_tr.get("text"):
-                        ai_text_parts.append(out_tr["text"])
-                        print(f"AI: {out_tr['text']}", end="", flush=True)
+                            if sc.get("interrupted"):
+                                print("\nAI interrupted by user.")
+                                player.clear()
+                                stop_experience_audio()
+                                ai_is_speaking = False
+                                queued_experience_audio = None
+                                partial = "".join(ai_text_parts).strip()
+                                ai_text_parts.clear()
+                                if partial:
+                                    asyncio.create_task(
+                                        _persist_message(session_id, "assistant",
+                                                         f"{partial} ... [અટકાવેલ]")
+                                    )
+                                continue
 
-                    # -- Turn complete ----------------------------------------
-                    if sc.get("turnComplete"):
-                        full_text = "".join(ai_text_parts).strip()
-                        ai_text_parts.clear()
-                        print("\n" + "-" * 50)
+                            tool_call = msg.get("toolCall") or sc.get("toolCall")
+                            if tool_call:
+                                fn_calls = tool_call.get("functionCalls", [])
+                                if fn_calls:
+                                    new_audio = await _handle_tool_calls(gemini_ws, fn_calls)
+                                    if new_audio:
+                                        queued_experience_audio = new_audio
 
-                        # Wait until all buffered speaker audio finishes playing out loud
-                        while player.is_playing():
-                            await asyncio.sleep(0.08)
+                            model_turn = sc.get("modelTurn", {})
+                            for part in model_turn.get("parts", []):
+                                inline = part.get("inlineData", {})
+                                if inline.get("data"):
+                                    ai_is_speaking = True
+                                    player.feed(base64.b64decode(inline["data"]))
+                                if part.get("text"):
+                                    ai_text_parts.append(part["text"])
+                                    print(f"AI: {part['text']}", end="", flush=True)
 
-                        ai_is_speaking = False
+                            out_tr = sc.get("outputTranscription", {})
+                            if out_tr.get("text"):
+                                ai_text_parts.append(out_tr["text"])
+                                print(f"AI: {out_tr['text']}", end="", flush=True)
 
-                        # If an experience audio was queued by tools, play it NOW after AI speech finishes!
-                        if queued_experience_audio:
-                            audio_to_play = queued_experience_audio
-                            queued_experience_audio = None
-                            print(f"\n▶️ [AI બોલી લીધું છે. હવે ખેડૂત અનુભવ ઓડિયો શરૂ થઈ રહ્યો છે...]")
-                            play_experience_audio(audio_to_play)
-                        else:
-                            print("🎤 [તમારો પ્રશ્ન પૂછો / Please speak now...]")
+                            if sc.get("turnComplete"):
+                                full_text = "".join(ai_text_parts).strip()
+                                ai_text_parts.clear()
+                                print("\n" + "-" * 50)
 
-                        if full_text:
-                            asyncio.create_task(
-                                _persist_message(session_id, "assistant", full_text)
-                            )
-                            asyncio.create_task(
-                                _update_farmer_profile(session_id)
-                            )
+                                while player.is_playing():
+                                    await asyncio.sleep(0.08)
 
-            await asyncio.gather(mic_to_gemini(), gemini_to_speaker())
+                                ai_is_speaking = False
+
+                                if queued_experience_audio:
+                                    audio_to_play = queued_experience_audio
+                                    queued_experience_audio = None
+                                    print(f"\n▶️ [AI બોલી લીધું છે. હવે ખેડૂત અનુભવ ઓડિયો શરૂ થઈ રહ્યો છે...]")
+                                    play_experience_audio(audio_to_play)
+                                else:
+                                    print("🎤 [તમારો પ્રશ્ન પૂછો / Please speak now...]")
+
+                                if full_text:
+                                    asyncio.create_task(
+                                        _persist_message(session_id, "assistant", full_text)
+                                    )
+                                    asyncio.create_task(
+                                        _update_farmer_profile(session_id)
+                                    )
+
+                    await asyncio.gather(mic_to_gemini(), gemini_to_speaker())
+                    # If gather() returns cleanly, reconnect
+                    print("ℹ️  Gemini session ended. Reconnecting...")
+
+            except KeyboardInterrupt:
+                raise   # propagate to outer handler
+
+            except Exception as exc:
+                err_str = str(exc)
+
+                # Auth errors — no point retrying, exit cleanly
+                if "1008" in err_str or "1007" in err_str or "authentication" in err_str.lower():
+                    print("\n" + "=" * 60)
+                    print("🔑 GEMINI API KEY AUTHENTICATION ERROR")
+                    print("=" * 60)
+                    print("Google rejected the connection. Check your GEMINI_API_KEY in .env")
+                    print("=" * 60 + "\n")
+                    raise
+
+                # All other errors (no close frame, network drop, timeout…) — reconnect
+                print(f"\n⚠️  Session error: {err_str}")
+                print(f"   Reconnecting in {reconnect_delay}s... (mic stays open)")
+                player.clear()
+                stop_experience_audio()
+                await asyncio.sleep(reconnect_delay)
+                # Back to top of while True → reconnects
 
     except KeyboardInterrupt:
         print("\n\nStopping...")
-    except Exception as exc:
-        err_str = str(exc)
-        print(f"\nSession error: {err_str}")
-        if "1008" in err_str or "authentication" in err_str.lower() or "1007" in err_str:
-            print("\n" + "=" * 60)
-            print("🔑 GEMINI API KEY AUTHENTICATION ERROR")
-            print("=" * 60)
-            print("Google rejected the Gemini Live connection due to invalid authentication.")
-            print("\nCommon Causes & Solutions:")
-            print("1. Check your .env file:")
-            print("   Make sure GEMINI_API_KEY is set without quotes or extra spaces:")
-            print("   GEMINI_API_KEY=AIzaSy...")
-            print("2. Google AI Studio Key vs Google Cloud Key:")
-            print("   Gemini Live requires a key from Google AI Studio:")
-            print("   👉 https://aistudio.google.com/app/apikey")
-            print("3. If using Google Cloud Console:")
-            print("   Ensure 'Generative Language API' is enabled and API key has NO HTTP/IP restrictions.")
-            print("=" * 60 + "\n")
     finally:
         shutdown.set()
         mic_q.put(None)
