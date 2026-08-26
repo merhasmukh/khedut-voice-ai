@@ -53,7 +53,10 @@ BASE_SYSTEM_INSTRUCTION = """\
    - ખેડૂત નંબર આપ્યા પછી `send_whatsapp_answer` ટૂલ બોલાવો.
    - answer_text = વાતચીતમાં છેલ્લો આપેલ જ્ઞાન-ભરેલો AI જવાબ (૧-૩ વાક્ય, ગુજરાતી). મહત્વપૂર્ણ: જો જવાબમાં YouTube વિડીયો કે પુસ્તકની લિંક હોય, તો હંમેશા આખી સાચી URL લિંક (https://www.youtube.com/watch?v=... અથવા https://www.kamdhenuuni.edu.in/...pdf) જ લખો. ક્યારેય [YouTube Video Link] કે [લિંક] જેવા શબ્દો ન વાપરો.
    - ટૂલ સફળ થાય ત્યારે AI બોલે: "WhatsApp પર મોકલ્યો! ચેક કરી લેજો."
-10. પુસ્તકો, સાહિત્ય અને YouTube વિડીયો: જ્યારે પણ ખેડૂત પુસ્તક, સાહિત્ય, PDF કે YouTube વિડીયો વિશે પૂછે, ત્યારે `search_agricultural_knowledge_base` દ્વારા માહિતી શોધીને શ્રી આચાર્ય દેવવ્રતજી (માનનીય રાજ્યપાલશ્રી) લિખિત 'પ્રાકૃતિક કૃષિ' પુસ્તકની કામધેનુ યુનિવર્સિટી PDF લિંક અથવા સંબંધિત YouTube વિડીયો લિંક આખી સાચી URL સાથે આપો.
+10. પુસ્તકો, સાહિત્ય અને YouTube વિડીયો: જ્યારે પણ ખેડૂત પુસ્તક, સાહિત્ય, PDF કે YouTube વિડીયો વિશે પૂછે:
+   - પુસ્તક PDF માટે હંમેશા આ જ સત્તાવાર સાચી લિંક આપો: https://www.kamdhenuuni.edu.in/Content/writereaddata/images/pdf/Organic-Farming-eBook-by-Acharya-Devvrat-Govt-guj.pdf
+   - YouTube વિડીયો માટે હંમેશા આ સત્તાવાર લિંક આપો: https://www.youtube.com/watch?v=JUH-d6SFvjo
+   - ક્યારેય કોઈ અંદાજિત કે ખોટી URL જાતે બનાવવી નહીં.
 """
 
 KNOWLEDGE_BASE_TOOL = {
@@ -132,8 +135,9 @@ def _format_whatsapp_text(text: str) -> str:
     """
     Cleans and formats AI text for WhatsApp:
     1. Converts Markdown links [Title](https://...) -> Title: https://...
-    2. Replaces placeholder bracket tokens like [YouTube Video Link] with actual URLs
-    3. Replaces [PDF Link] or [Book Link] with the official Kamdhenu University PDF URL
+    2. Replaces any hallucinated or malformed kamdhenuuni URL with the verified official eBook PDF URL
+    3. Replaces placeholder bracket tokens like [YouTube Video Link] with actual URLs
+    4. Replaces [PDF Link] or [Book Link] with the official Kamdhenu University PDF URL
     """
     BOOK_PDF_URL = "https://www.kamdhenuuni.edu.in/Content/writereaddata/images/pdf/Organic-Farming-eBook-by-Acharya-Devvrat-Govt-guj.pdf"
     DEFAULT_YT_URL = "https://www.youtube.com/watch?v=JUH-d6SFvjo"
@@ -142,10 +146,18 @@ def _format_whatsapp_text(text: str) -> str:
     if not cleaned:
         return ""
 
-    # Convert markdown link syntax [Label](URL) -> Label: URL
+    # 1. Convert markdown link syntax [Label](URL) -> Label: URL
     cleaned = re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'\1: \2', cleaned)
 
-    # Replace YouTube placeholders
+    # 2. Fix ANY hallucinated or malformed kamdhenuuni / organic farming book PDF URL
+    cleaned = re.sub(
+        r'https?://(?:www\.)?kamdhenuuni\.edu\.in/[a-zA-Z0-9_\-/\?=&%]+(?:\.pdf)?',
+        BOOK_PDF_URL,
+        cleaned,
+        flags=re.IGNORECASE
+    )
+
+    # 3. Replace YouTube placeholders
     cleaned = re.sub(
         r'\[\s*(?:YouTube|Youtube|Video|વિડીયો|યૂટ્યુબ)[\w\s\-\:]*(?:Link|લિંક)?\s*\]',
         DEFAULT_YT_URL,
@@ -153,7 +165,7 @@ def _format_whatsapp_text(text: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # Replace PDF/Book placeholders
+    # 4. Replace PDF/Book placeholders
     cleaned = re.sub(
         r'\[\s*(?:PDF|Book|eBook|પુસ્તક|પીડીએફ|સાહિત્ય)[\w\s\-\:]*(?:Link|લિંક)?\s*\]',
         BOOK_PDF_URL,
@@ -161,7 +173,7 @@ def _format_whatsapp_text(text: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # Catch generic [Link] or [લિંક]
+    # 5. Catch generic [Link] or [લિંક]
     if "[link]" in cleaned.lower() or "[લિંક]" in cleaned:
         cleaned = re.sub(r'\[\s*(?:Link|લિંક)\s*\]', DEFAULT_YT_URL, cleaned, flags=re.IGNORECASE)
 

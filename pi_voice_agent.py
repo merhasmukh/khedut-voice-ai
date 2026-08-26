@@ -50,6 +50,7 @@ from ai_services.gemini_api import (
     get_gemini_ws_url,             # builds wss://...?key=...
     build_setup_message,           # builds full Gemini setup payload
     _normalize_phone,              # phone number normalisation helper
+    _format_whatsapp_text,         # clean and format URLs for WhatsApp
 )
 from rag.retriever import (
     retrieve_relevant_knowledge,   # Qdrant search + local JSON fallback
@@ -478,7 +479,7 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> str | None:
         # ── Tool: send_whatsapp_answer ─────────────────────────────────────────
         elif fn_name == "send_whatsapp_answer":
             phone_raw   = fn_args.get("phone_number", "")
-            answer_text = fn_args.get("answer_text", "")
+            answer_text = _format_whatsapp_text(fn_args.get("answer_text", ""))
 
             phone = _normalize_phone(phone_raw)
             if not phone:
