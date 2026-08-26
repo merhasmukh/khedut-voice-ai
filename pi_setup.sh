@@ -19,7 +19,7 @@ echo "=============================================="
 echo ""
 
 # -- 1. System packages -------------------------------------------------------
-echo "[1/4] Installing system audio packages..."
+echo "[1/6] Installing system audio packages..."
 sudo apt-get update -qq
 sudo apt-get install -y \
     python3-pip \
@@ -54,7 +54,7 @@ echo "    pactl set-default-sink bluez_sink.XX_XX_XX_XX_XX_XX.a2dp_sink"
 echo ""
 
 # -- 3. Python virtual environment --------------------------------------------
-echo "[2/4] Setting up Python virtual environment..."
+echo "[2/6] Setting up Python virtual environment..."
 if [ ! -d "venv" ]; then
     python3 -m venv venv
     echo "      Created new venv with $(python3 --version)."
@@ -68,13 +68,13 @@ echo "      Active Python version: $(python --version)"
 echo ""
 
 # -- 4. Install dependencies --------------------------------------------------
-echo "[3/4] Installing lightweight Voice AI dependencies (requirements-pi.txt)..."
+echo "[3/6] Installing lightweight Voice AI dependencies (requirements-pi.txt)..."
 pip install -r requirements-pi.txt --quiet
 echo "      Dependencies installed."
 echo ""
 
 # -- 5. Initialize SQLite Database -------------------------------------------
-echo "[4/5] Initializing SQLite database (khedut_voice.db)..."
+echo "[4/6] Initializing SQLite database (khedut_voice.db)..."
 python -c "
 import asyncio
 from database.connection import init_db
@@ -83,7 +83,7 @@ asyncio.run(init_db())
 echo ""
 
 # -- 6. Check .env ------------------------------------------------------------
-echo "[5/5] Checking .env configuration..."
+echo "[5/6] Checking .env configuration..."
 if [ ! -f ".env" ]; then
     if [ -f ".env.example" ]; then
         cp .env.example .env
