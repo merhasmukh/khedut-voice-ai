@@ -1,4 +1,4 @@
-from whatsapp_client import send_whatsapp_message
+from ai_services.whatsapp_client import send_whatsapp_message
 
 response = send_whatsapp_message(
     to=["919724455986"],

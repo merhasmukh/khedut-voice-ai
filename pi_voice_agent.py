@@ -9,6 +9,7 @@ import json
 import math
 import os
 import queue
+import re
 import struct
 import sys
 import threading
@@ -47,6 +48,7 @@ from ai_services.gemini_api import (
     GEMINI_WS_BASE_URL,
     get_gemini_ws_url,             # builds wss://...?key=...
     build_setup_message,           # builds full Gemini setup payload
+    _normalize_phone,              # phone number normalisation helper
 )
 from rag.retriever import (
     retrieve_relevant_knowledge,   # Qdrant search + local JSON fallback
@@ -55,6 +57,7 @@ from rag.retriever import (
 from database.connection import AsyncSessionLocal, init_db
 from database import crud
 from ai_services.profile_extractor import extract_profile_from_conversation
+from ai_services.whatsapp_client import send_whatsapp_message_async
 
 # =============================================================================
 # Audio Device Configuration
@@ -366,6 +369,48 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> str | None:
                     "content": {
                         "status":  "queued",
                         "message": f"{farmer_name} ({district}) નો ઓડિયો અનુભવ AI બોલવાનું પૂરું કરે પછી શરૂ થશે.",
+                    },
+                },
+                "id": call_id,
+            })
+
+        # ── Tool: send_whatsapp_answer ─────────────────────────────────────────
+        elif fn_name == "send_whatsapp_answer":
+            phone_raw   = fn_args.get("phone_number", "")
+            answer_text = fn_args.get("answer_text", "")
+
+            phone = _normalize_phone(phone_raw)
+            if not phone:
+                wa_status  = "error"
+                wa_message = f"અમાન્ય WhatsApp નંબર: {phone_raw}. કૃપા કરીને ૧૦ અંકનો નંબર આપો."
+                print(f"📲 [WhatsApp] Invalid phone: {phone_raw!r}")
+            else:
+                try:
+                    wa_result = await send_whatsapp_message_async(
+                        to=phone,
+                        body_params=[answer_text],
+                        template_name="natural_farming_ai_bot_response",
+                        language="gu",
+                    )
+                    if wa_result.get("status") == "error":
+                        wa_status  = "error"
+                        wa_message = f"WhatsApp ન ગયો: {wa_result.get('error', 'Unknown error')}"
+                        print(f"📲 [WhatsApp] Send failed to {phone}: {wa_result}")
+                    else:
+                        wa_status  = "sent"
+                        wa_message = f"✅ {phone} ને WhatsApp મોકલ્યો."
+                        print(f"📲 [WhatsApp] Sent to {phone}: {answer_text[:60]}...")
+                except Exception as wa_exc:
+                    wa_status  = "error"
+                    wa_message = f"WhatsApp error: {wa_exc}"
+                    print(f"📲 [WhatsApp] Exception: {wa_exc}")
+
+            fn_responses.append({
+                "response": {
+                    "name": fn_name,
+                    "content": {
+                        "status":  wa_status,
+                        "message": wa_message,
                     },
                 },
                 "id": call_id,

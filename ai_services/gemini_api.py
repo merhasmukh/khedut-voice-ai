@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 from typing import Optional, Union
 
 import websockets
@@ -19,6 +20,7 @@ from database.connection import AsyncSessionLocal
 from database import crud
 from ai_services.profile_extractor import extract_profile_from_conversation
 from rag.retriever import retrieve_relevant_knowledge, build_rag_context
+from ai_services.whatsapp_client import send_whatsapp_message_async
 
 load_dotenv()
 
@@ -46,6 +48,11 @@ BASE_SYSTEM_INSTRUCTION = """\
 6. વિગત ત્યારે જ આપવી: ખેડૂત જ્યારે "વિગતે સમજાવો" અથવા "detail માં કહો" એમ કહે ત્યારે જ વિસ્તારથી જવાબ આપો.
 7. પ્રાકૃતિક/ઓર્ગેનિક ઉપાય: ફક્ત દેશી ખાતર (જીવામૃત, ઘનજીવામૃત) અને જૈવિક કીટ નિયંત્રણ (નીમાસ્ત્ર, બ્રહ્માસ્ત્ર, અગ્નિઅસ્ત્ર, દશપર્ણી અર્ક, ખાટી છાશ) સૂચવો. કોઈ રાસાયણિક દવા કે ખાતર ન જણાવવા.
 8. સ્નેહાળ ગ્રામીણ ભાષા: ગુજરાત-સૌરાષ્ટ્રની આત્મીય, મીઠી અને સન્માનજનક ગ્રામીણ ગુજરાતી ભાષા વાપરો.
+9. WhatsApp પર જવાબ મોકલવો: જ્યારે ખેડૂત "WhatsApp પર મોકલો", "WhatsApp ma moklo", "WhatsApp par mokli do" અથવા similar request કરે:
+   - પ્રથમ ખેડૂતનો WhatsApp નંબર પૂછો: "ભાઈ, તમારો WhatsApp નંબર આપો."
+   - ખેડૂત નંબર આપ્યા પછી `send_whatsapp_answer` ટૂલ બોલાવો.
+   - answer_text = વાતચીતમાં છેલ્લો આપેલ જ્ઞાન-ભરેલો AI જવાબ (૧-૩ વાક્ય, ગુજરાતી).
+   - ટૂલ સફળ થાય ત્યારે AI બોલે: "WhatsApp પર મોકલ્યો! ચેક કરી લેજો."
 """
 
 KNOWLEDGE_BASE_TOOL = {
@@ -89,6 +96,24 @@ KNOWLEDGE_BASE_TOOL = {
                 },
                 "required": ["district", "audio_url"]
             }
+        },
+        {
+            "name": "send_whatsapp_answer",
+            "description": "જ્યારે ખેડૂત WhatsApp પર AI નો જવાબ મેળવવા ઈચ્છે ત્યારે આ ટૂલ બોલાવો. ખેડૂત નંબર આપ્યા પછી છેલ્લો AI જ્ઞાન-ભરેલો જવાબ WhatsApp ટેમ્પ્લેટ દ્વારા તે નંબર પર મોકલો.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "phone_number": {
+                        "type": "STRING",
+                        "description": "ખેડૂતનો WhatsApp નંબર (દા.ત. '919724455986' અથવા '97244 55986' — 10 કે 12 અંક)"
+                    },
+                    "answer_text": {
+                        "type": "STRING",
+                        "description": "WhatsApp પર મોકલવાનો AI નો જ્ઞાન-ભરેલો જવાબ (ગુજરાતી, ૧-૩ વાક્ય)"
+                    }
+                },
+                "required": ["phone_number", "answer_text"]
+            }
         }
     ]
 }
@@ -100,6 +125,21 @@ def get_gemini_ws_url(api_key: str | None = None) -> str:
     if not key:
         raise ValueError("GEMINI_API_KEY is not set.")
     return f"{GEMINI_WS_BASE_URL}?key={key}"
+
+
+def _normalize_phone(raw: str) -> str:
+    """
+    Normalise a user-spoken/typed phone number to WhatsApp-ready format.
+    - Strips all non-digit characters (spaces, +, -, (, ))
+    - If 10 digits remain, prepends '91' (India country code)
+    - Returns empty string if result is not 10-12 digits (invalid)
+    """
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 10:
+        digits = "91" + digits
+    if 10 <= len(digits) <= 12:
+        return digits
+    return ""
 
 
 def build_setup_message(
@@ -267,7 +307,49 @@ async def handle_gemini_live_session(
                                             },
                                             "id": call_id
                                         })
+                                    elif func_name == "send_whatsapp_answer":
+                                        phone_raw   = args.get("phone_number", "")
+                                        answer_text = args.get("answer_text", "")
+
+                                        phone = _normalize_phone(phone_raw)
+                                        if not phone:
+                                            wa_status  = "error"
+                                            wa_message = f"અમાન્ય WhatsApp નંબર: {phone_raw}. કૃપા કરીને ૧૦ અંકનો નંબર આપો."
+                                            print(f"📲 [WhatsApp] Invalid phone: {phone_raw!r}")
+                                        else:
+                                            try:
+                                                wa_result = await send_whatsapp_message_async(
+                                                    to=phone,
+                                                    body_params=[answer_text],
+                                                    template_name="natural_farming_ai_bot_response",
+                                                    language="gu",
+                                                )
+                                                if wa_result.get("status") == "error":
+                                                    wa_status  = "error"
+                                                    wa_message = f"WhatsApp ન ગયો: {wa_result.get('error', 'Unknown error')}"
+                                                    print(f"📲 [WhatsApp] Send failed to {phone}: {wa_result}")
+                                                else:
+                                                    wa_status  = "sent"
+                                                    wa_message = f"✅ {phone} ને WhatsApp મોકલ્યો."
+                                                    print(f"📲 [WhatsApp] Sent to {phone}: {answer_text[:60]}...")
+                                            except Exception as wa_exc:
+                                                wa_status  = "error"
+                                                wa_message = f"WhatsApp error: {wa_exc}"
+                                                print(f"📲 [WhatsApp] Exception: {wa_exc}")
+
+                                        function_responses.append({
+                                            "response": {
+                                                "name": func_name,
+                                                "content": {
+                                                    "status":  wa_status,
+                                                    "message": wa_message,
+                                                }
+                                            },
+                                            "id": call_id
+                                        })
+
                                     else:
+                                        # search_agricultural_knowledge_base (or unknown tool)
                                         query = args.get("query", "")
                                         print(f"🔍 [Gemini Live ToolCall: {func_name}] Querying Qdrant for: {query}")
 
