@@ -20,17 +20,21 @@ from typing import Any, Dict, List, Optional
 # Gemini embedding is always used (both Qdrant and Pinecone paths)
 from .embeddings import get_embedding
 
-# ── Select active vector backend ──────────────────────────────────────────────
-VECTOR_STORE  = os.environ.get("VECTOR_STORE", "qdrant").strip().lower()
-_USE_PINECONE = VECTOR_STORE == "pinecone"
-
-if _USE_PINECONE:
+# ── Always import both backends safely to allow runtime switching ─────────────
+try:
     from .pinecone_client import (
         is_pinecone_available     as _is_pinecone_available_sync,
         search_knowledge_pinecone as _search_pinecone,
     )
-else:
+except ImportError:
+    _is_pinecone_available_sync = None
+    _search_pinecone = None
+
+try:
     from .qdrant_client import is_qdrant_available, search_knowledge
+except ImportError:
+    is_qdrant_available = None
+    search_knowledge = None
 
 
 
@@ -139,12 +143,19 @@ async def retrieve_relevant_knowledge(
     if not clean_query:
         return []
 
+    # ── Dynamic backend selection from current environment ───────────────────
+    use_pinecone = os.environ.get("VECTOR_STORE", "qdrant").strip().lower() == "pinecone"
+
     # ── Pinecone backend ──────────────────────────────────────────────────────
-    if _USE_PINECONE:
+    if use_pinecone:
         try:
-            if not _is_pinecone_available_sync():
-                print("⚠️  Pinecone unavailable — falling back to local JSON search")
-                return _search_local_json_knowledge(clean_query, limit=limit)
+            if not _is_pinecone_available_sync or not _is_pinecone_available_sync():
+                print(f"⚠️  [Vector Store: Local JSON Fallback] Pinecone unavailable — searching local JSON for: '{clean_query}'")
+                fallback_matches = _search_local_json_knowledge(clean_query, limit=limit)
+                for m in fallback_matches:
+                    m["vector_store"] = "Local JSON Knowledge Base (Fallback)"
+                return fallback_matches
+
             query_vector = await get_embedding(clean_query)
             matches = _search_pinecone(
                 query_vector=query_vector,
@@ -153,15 +164,30 @@ async def retrieve_relevant_knowledge(
                 crop_filter=crop_filter,
             )
             if not matches:
-                return _search_local_json_knowledge(clean_query, limit=limit)
+                print(f"ℹ️  [Vector Store: Pinecone (No matches >= {score_threshold})] Falling back to local JSON for: '{clean_query}'")
+                fallback_matches = _search_local_json_knowledge(clean_query, limit=limit)
+                for m in fallback_matches:
+                    m["vector_store"] = "Local JSON Knowledge Base (Fallback)"
+                return fallback_matches
+
+            for m in matches:
+                m["vector_store"] = "Pinecone Vector Store (Cloud)"
+            print(f"📚 [Vector Store Used: Pinecone Cloud] Found {len(matches)} relevant knowledge matches for: '{clean_query}'")
             return matches
         except Exception as exc:
-            print(f"⚠️  Pinecone retrieval error — falling back to local search: {exc}")
-            return _search_local_json_knowledge(clean_query, limit=limit)
+            print(f"⚠️  [Vector Store: Local JSON Fallback] Pinecone error ({exc}) — searching local JSON for: '{clean_query}'")
+            fallback_matches = _search_local_json_knowledge(clean_query, limit=limit)
+            for m in fallback_matches:
+                m["vector_store"] = "Local JSON Knowledge Base (Fallback)"
+            return fallback_matches
 
     # ── Qdrant backend (default) ──────────────────────────────────────────────
     if not await is_qdrant_available():
-        return _search_local_json_knowledge(clean_query, limit=limit)
+        print(f"⚠️  [Vector Store: Local JSON Fallback] Qdrant unavailable — searching local JSON for: '{clean_query}'")
+        fallback_matches = _search_local_json_knowledge(clean_query, limit=limit)
+        for m in fallback_matches:
+            m["vector_store"] = "Local JSON Knowledge Base (Fallback)"
+        return fallback_matches
 
     try:
         query_vector = await get_embedding(clean_query)
@@ -172,11 +198,22 @@ async def retrieve_relevant_knowledge(
             crop_filter=crop_filter,
         )
         if not matches:
-            return _search_local_json_knowledge(clean_query, limit=limit)
+            print(f"ℹ️  [Vector Store: Qdrant (No matches >= {score_threshold})] Falling back to local JSON for: '{clean_query}'")
+            fallback_matches = _search_local_json_knowledge(clean_query, limit=limit)
+            for m in fallback_matches:
+                m["vector_store"] = "Local JSON Knowledge Base (Fallback)"
+            return fallback_matches
+
+        for m in matches:
+            m["vector_store"] = "Qdrant Vector Store (Local)"
+        print(f"📚 [Vector Store Used: Qdrant Local] Found {len(matches)} relevant knowledge matches for: '{clean_query}'")
         return matches
     except Exception as exc:
-        print(f"⚠️  Vector retrieval fallback to local search: {exc}")
-        return _search_local_json_knowledge(clean_query, limit=limit)
+        print(f"⚠️  [Vector Store: Local JSON Fallback] Qdrant error ({exc}) — searching local JSON for: '{clean_query}'")
+        fallback_matches = _search_local_json_knowledge(clean_query, limit=limit)
+        for m in fallback_matches:
+            m["vector_store"] = "Local JSON Knowledge Base (Fallback)"
+        return fallback_matches
 
 
 async def build_rag_context(

@@ -45,18 +45,19 @@ BASE_SYSTEM_INSTRUCTION = """\
    - સાથે `play_farmer_experience_audio` ટૂલ બોલાવો. ટૂલ બોલાવ્યા પછી વધારાનું બીજું કંઈ ન બોલવું જેથી ખેડૂત શાંતિથી ઓડિયો સાંભળી શકે.
 4. વેક્ટર સ્ટોરમાંથી માહિતી મેળવવી: જ્યારે પણ ખેડૂત કોઈ ચોક્કસ આંકડા (જેમ કે કોઈ જિલ્લામાં પ્રાકૃતિક ખેતી કરતા ખેડૂતોની સંખ્યા), ખાતર/દવાના ડોઝ, બનાવવાની રીત કે પાક વિષયક માહિતી પૂછે, ત્યારે `search_agricultural_knowledge_base` ટૂલનો ઉપયોગ કરી વેક્ટર સ્ટોરમાંથી સાચી માહિતી શોધીને જ ચોક્કસ જવાબ આપો.
 5. ટૂંકો અને સરળ જવાબ: ખેડૂત જે પ્રશ્ન પૂછે, તેનો જ સીધો, સાચો અને સરળ ૧ થી ૩ વાક્યોમાં દેશી ગુજરાતીમાં જવાબ આપો.
-   - મહત્વપૂર્ણ (URL ક્યારેય મોઢેથી ન બોલવી): વાતચીતમાં બોલતી વખતે ક્યારેય કોઈ પણ વેબસાઇટ, PDF કે YouTube ની લાંબી વેબ લિંક્સ (જેમ કે https://www.youtube... કે https://www.kamdhenuuni...) અક્ષરે-અક્ષર ન બોલવી. અવાજમાં માત્ર પુસ્તક કે વિડીયોનું નામ કહો અને કહો કે "જો તમારે આની લિંક જોઈતી હોય તો તમારો WhatsApp નંબર આપો, હું તમને WhatsApp પર લિંક મોકલી આપું."
+   - URL મોઢેથી ક્યારેય ન બોલવી: વાતચીતમાં બોલતી વખતે ક્યારેય કોઈ પણ વેબસાઇટ, PDF કે YouTube ની લાંબી વેબ લિંક્સ (જેમ કે https://...) મોઢેથી ન બોલવી.
+   - પોતાની મેળે સામેથી WhatsApp માટે ક્યારેય ન પૂછવું: જ્યાં સુધી ખેડૂત પોતે પોતાની જાતે સામેથી ન કહે, ત્યાં સુધી સામાન્ય જવાબોમાં સામેથી ક્યારેય WhatsApp નંબર ન માંગવો કે "WhatsApp પર મોકલું?" એવું ન પૂછવું.
 6. વિગત ત્યારે જ આપવી: ખેડૂત જ્યારે "વિગતે સમજાવો" અથવા "detail માં કહો" એમ કહે ત્યારે જ વિસ્તારથી જવાબ આપો.
 7. પ્રાકૃતિક/ઓર્ગેનિક ઉપાય: ફક્ત દેશી ખાતર (જીવામૃત, ઘનજીવામૃત) અને જૈવિક કીટ નિયંત્રણ (નીમાસ્ત્ર, બ્રહ્માસ્ત્ર, અગ્નિઅસ્ત્ર, દશપર્ણી અર્ક, ખાટી છાશ) સૂચવો. કોઈ રાસાયણિક દવા કે ખાતર ન જણાવવા.
 8. સ્નેહાળ ગ્રામીણ ભાષા: ગુજરાત-સૌરાષ્ટ્રની આત્મીય, મીઠી અને સન્માનજનક ગ્રામીણ ગુજરાતી ભાષા વાપરો.
-9. WhatsApp પર જવાબ મોકલવો: જ્યારે ખેડૂત "WhatsApp પર મોકલો", "WhatsApp ma moklo", "WhatsApp par mokli do" અથવા similar request કરે:
-   - પ્રથમ ખેડૂતનો WhatsApp નંબર પૂછો: "ભાઈ, તમારો WhatsApp નંબર આપો."
+9. WhatsApp પર જવાબ મોકલવો (માત્ર ખેડૂત કહે ત્યારે જ): ફક્ત અને ફક્ત જ્યારે ખેડૂત પોતે સામેથી "WhatsApp પર મોકલો", "WhatsApp ma moklo", "WhatsApp par mokli do" એમ સ્પષ્ટ કહે ત્યારે જ:
+   - ખેડૂતનો WhatsApp નંબર પૂછો: "ભાઈ, તમારો WhatsApp નંબર આપો."
    - ખેડૂત નંબર આપ્યા પછી `send_whatsapp_answer` ટૂલ બોલાવો.
-   - answer_text = WhatsApp મેસેજ માટેનો જવાબ. જો જવાબમાં YouTube વિડીયો કે પુસ્તકની લિંક હોય, તો answer_text માં આખી સાચી URL લિંક (https://www.youtube.com/watch?v=... અથવા https://www.kamdhenuuni.edu.in/...pdf) લખો.
+   - answer_text = WhatsApp મેસેજ માટેનો જવાબ (જો જવાબમાં YouTube વિડીયો કે પુસ્તકની લિંક હોય, તો answer_text માં આખી સાચી URL લિંક લખો).
    - મોઢેથી બોલતી વખતે URL ન બોલવી: ટૂલ સફળ થાય ત્યારે AI અવાજમાં માત્ર આટલું જ બોલે: "મેં WhatsApp પર મોકલી દીધું છે, ચેક કરી લેજો!"
 10. પુસ્તકો, સાહિત્ય અને YouTube વિડીયો: જ્યારે પણ ખેડૂત પુસ્તક, સાહિત્ય, PDF કે YouTube વિડીયો વિશે પૂછે:
-   - અવાજમાં માત્ર પુસ્તક/વિડીયોનું નામ અને મહત્વ જણાવો (જેમ કે માનનીય રાજ્યપાલ શ્રી આચાર્ય દેવવ્રતજી લિખિત 'પ્રાકૃતિક કૃષિ' પુસ્તક). અવાજમાં URL લિંક મોઢેથી ક્યારેય ન બોલવી.
-   - WhatsApp મેસેજ (send_whatsapp_answer) માટે નીચેની સત્તાવાર સાચી લિંક્સ જ વાપરવી:
+   - અવાજમાં માત્ર પુસ્તક/વિડીયોનું નામ અને ટૂંકમાં વિગત જણાવો (જેમ કે માનનીય રાજ્યપાલ શ્રી આચાર્ય દેવવ્રતજી લિખિત 'પ્રાકૃતિક કૃષિ' પુસ્તક). અવાજમાં URL લિંક મોઢેથી ક્યારેય ન બોલવી અને સામેથી WhatsApp માટે પણ ન પૂછવું.
+   - જો ખેડૂત પોતે WhatsApp પર મોકલવા કહે ત્યારે જ send_whatsapp_answer ટૂલના answer_text માં નીચેની સત્તાવાર સાચી લિંક્સ વાપરવી:
      • પુસ્તક PDF માટે: https://www.kamdhenuuni.edu.in/Content/writereaddata/images/pdf/Organic-Farming-eBook-by-Acharya-Devvrat-Govt-guj.pdf
      • YouTube વિડીયો માટે: https://www.youtube.com/watch?v=JUH-d6SFvjo
    - ક્યારેય કોઈ અંદાજિત કે ખોટી URL જાતે બનાવવી નહીં.
@@ -456,10 +457,12 @@ async def handle_gemini_live_session(
                                     else:
                                         # search_agricultural_knowledge_base (or unknown tool)
                                         query = args.get("query", "")
-                                        print(f"🔍 [Gemini Live ToolCall: {func_name}] Querying Qdrant for: {query}")
+                                        print(f"\n🔍 [Gemini Live ToolCall: {func_name}] Searching knowledge base for: '{query}'")
 
                                         matches = await retrieve_relevant_knowledge(query, limit=3, score_threshold=0.45)
                                         if matches:
+                                            vstore_name = matches[0].get("vector_store", "Vector Store")
+                                            print(f"✅ [Vector Store Used: {vstore_name}] Retrieved {len(matches)} knowledge chunks for AI.")
                                             results_text = "\n\n".join([f"• [{m.get('title', '')}]: {m.get('text', '')}" for m in matches])
                                             # If experience with audio is retrieved, notify frontend
                                             for m in matches:
@@ -473,6 +476,7 @@ async def handle_gemini_live_session(
                                                     }))
                                                     break
                                         else:
+                                            print(f"ℹ️  No knowledge base matches found for: '{query}'")
                                             results_text = "આ વિષય પર કોઈ ચોક્કસ માહિતી મળી નથી."
 
                                         function_responses.append({

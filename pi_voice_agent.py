@@ -428,10 +428,12 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> str | None:
         # ── Tool: search_agricultural_knowledge_base ──────────────────────────
         if fn_name == "search_agricultural_knowledge_base":
             query = fn_args.get("query", "")
-            print(f"RAG search: {query}")
+            print(f"\n🔍 [Knowledge Base Tool] Searching query: '{query}'")
             try:
                 matches = await retrieve_relevant_knowledge(query, limit=3, score_threshold=0.45)
                 if matches:
+                    vstore_name = matches[0].get("vector_store", "Vector Store")
+                    print(f"✅ [Vector Store Used: {vstore_name}] Retrieved {len(matches)} knowledge entries for AI response.")
                     results_text = "\n\n".join([
                         f"- [{m.get('title', '')}]: {m.get('text', '')}"
                         for m in matches
@@ -442,10 +444,11 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> str | None:
                             pending_audio = m["audio_url"]
                             break
                 else:
+                    print(f"ℹ️  No knowledge base matches found for: '{query}'")
                     results_text = "આ વિષય પર કોઈ ચોક્કસ માહિતી મળી નથી."
             except Exception as exc:
                 results_text = f"Search error: {exc}"
-                print(f"  RAG error: {exc}")
+                print(f"⚠️  RAG search error: {exc}")
 
             fn_responses.append({
                 "response": {
@@ -711,15 +714,26 @@ async def run_pi_session(
                             if pcm is None:
                                 break
 
+                            rms = compute_rms(pcm)
+
+                            # ── 1. Interrupting Long Experience/Farmer Audio ──
                             if is_experience_playing():
-                                speech_streak = 0
+                                if rms >= interrupt_threshold:
+                                    speech_streak += 1
+                                    if speech_streak >= VAD_STREAK_TRIGGER:
+                                        print(f"\n⚡ [ખેડૂતનો અવાજ સંભળાયો (RMS {int(rms)}) -> ઓડિયો બંધ કરવામાં આવી રહ્યો છે...]")
+                                        stop_experience_audio()
+                                        speech_streak = 0
+                                else:
+                                    speech_streak = max(0, speech_streak - 1)
                                 continue
 
+                            # ── 2. AI Speaking (Non-interruptible) ──────────
                             if ai_is_speaking or player.is_playing():
                                 speech_streak = 0
                                 continue
 
-                            rms = compute_rms(pcm)
+                            # ── 3. Normal Listening Mode ──────────
                             if rms >= 1500:
                                 speech_streak += 1
                                 if speech_streak == 2:
@@ -788,12 +802,13 @@ async def run_pi_session(
                                     player.feed(base64.b64decode(inline["data"]))
                                 if part.get("text"):
                                     ai_text_parts.append(part["text"])
-                                    print(f"AI: {part['text']}", end="", flush=True)
+                                    print(part["text"], end="", flush=True)
 
                             out_tr = sc.get("outputTranscription", {})
                             if out_tr.get("text"):
-                                ai_text_parts.append(out_tr["text"])
-                                print(f"AI: {out_tr['text']}", end="", flush=True)
+                                # If outputTranscription happens (sometimes redundant with part["text"]),
+                                # avoid printing it again to prevent double-printing.
+                                pass
 
                             if sc.get("turnComplete"):
                                 full_text = "".join(ai_text_parts).strip()
@@ -839,8 +854,13 @@ async def run_pi_session(
                     print("=" * 60 + "\n")
                     raise
 
-                # All other errors (no close frame, network drop, timeout…) — reconnect
-                print(f"\n⚠️  Session error: {err_str}")
+                # Network / DNS resolution errors
+                if any(k in err_str.lower() for k in ("nodename nor servname", "name or service not known", "gaierror", "no route to host")):
+                    print(f"\n⚠️  ઇન્ટરનેટ / DNS કનેક્શન મળતું નથી (No Internet / DNS failure). કૃપા કરીને Wi-Fi / ઇન્ટરનેટ કનેક્શન તપાસો.")
+                else:
+                    # All other errors (no close frame, timeout…) — reconnect
+                    print(f"\n⚠️  Session error: {err_str}")
+
                 print(f"   Reconnecting in {reconnect_delay}s... (mic stays open)")
                 player.clear()
                 stop_experience_audio()
