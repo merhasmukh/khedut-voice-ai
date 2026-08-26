@@ -31,9 +31,13 @@ StandardError=journal
 
 # Keep Python output unbuffered so logs appear in real-time
 Environment=PYTHONUNBUFFERED=1
+Environment=USER=pi
+Environment=HOME=/home/pi
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
 
 # Audio device access
-SupplementaryGroups=audio bluetooth
+SupplementaryGroups=audio bluetooth pulse pulse-access
 
 [Install]
 WantedBy=multi-user.target

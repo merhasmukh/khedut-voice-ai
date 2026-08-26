@@ -707,7 +707,14 @@ async def run_pi_session(
                                 speech_streak = 0
                                 continue
 
-                            speech_streak = 0
+                            rms = compute_rms(pcm)
+                            if rms >= (interrupt_threshold * 0.7):
+                                speech_streak += 1
+                                if speech_streak == 2:
+                                    print(f"\n🎤 [Voice detected: RMS {int(rms)}]", end="", flush=True)
+                            else:
+                                speech_streak = 0
+
                             pcm_16k, _ = audioop.ratecv(
                                 pcm, 2, MIC_CHANNELS,
                                 MIC_CAPTURE_RATE, GEMINI_INPUT_RATE,

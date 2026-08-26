@@ -19,6 +19,14 @@ log "=============================================="
 log "  Khedut Voice AI -- Startup"
 log "=============================================="
 
+# -- Audio & PulseAudio environment for headless systemd service --------------
+export USER="${USER:-pi}"
+export HOME="${HOME:-/home/$USER}"
+PI_UID="$(id -u $USER 2>/dev/null || echo 1000)"
+export XDG_RUNTIME_DIR="/run/user/$PI_UID"
+export PULSE_SERVER="unix:$XDG_RUNTIME_DIR/pulse/native"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
 # -- 1. Load .env --------------------------------------------------------------
 if [ -f "$SCRIPT_DIR/.env" ]; then
     set -o allexport
