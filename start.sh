@@ -39,7 +39,17 @@ while ! ping -c 1 -W 3 8.8.8.8 > /dev/null 2>&1; do
 done
 log "Internet OK after $ATTEMPT retries."
 
-# -- 3. Validate GEMINI_API_KEY ------------------------------------------------
+# -- 3. Pull latest code from Git ----------------------------------------------
+log "Pulling latest code from repository..."
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    if git pull; then
+        log "Git pull successful (up to date)."
+    else
+        log "WARNING: git pull failed. Continuing with local code."
+    fi
+fi
+
+# -- 4. Validate GEMINI_API_KEY ------------------------------------------------
 CLEAN_KEY="$(echo "$GEMINI_API_KEY" | tr -d "\"' ")"
 if [ -z "$CLEAN_KEY" ]; then
     log "ERROR: GEMINI_API_KEY is not set in .env"
@@ -51,7 +61,7 @@ if [ -z "$CLEAN_KEY" ]; then
 fi
 log "GEMINI_API_KEY found (${#CLEAN_KEY} chars)."
 
-# -- 4. Activate virtual environment ------------------------------------------
+# -- 5. Activate virtual environment ------------------------------------------
 VENV="$SCRIPT_DIR/venv/bin/activate"
 if [ ! -f "$VENV" ]; then
     log "ERROR: venv not found at $VENV"
@@ -62,7 +72,7 @@ fi
 source "$VENV"
 log "venv activated: $(python --version)"
 
-# -- 5. Launch voice agent (exec = systemd tracks this PID directly) -----------
+# -- 6. Launch voice agent (exec = systemd tracks this PID directly) -----------
 log "Launching pi_voice_agent.py ..."
 log "=============================================="
 
