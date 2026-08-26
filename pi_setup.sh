@@ -130,18 +130,37 @@ pa.terminate()
 echo ""
 
 # -- Done ---------------------------------------------------------------------
-echo "=============================================="
+echo "==============================================" 
 echo "  Setup Complete! 🚀"
 echo "=============================================="
 echo ""
-echo "  Start the always-listening Voice AI:"
-echo "    source venv/bin/activate"
-echo "    python pi_voice_agent.py"
+
+# -- 6. Install systemd auto-start service ------------------------------------
+echo "[6/6] Installing systemd auto-start service..."
+chmod +x "$SCRIPT_DIR/start.sh"
+sudo cp "$SCRIPT_DIR/khedut-voice-pi.service" /etc/systemd/system/khedut-voice-pi.service
+sudo sed -i "s|/home/pi/hasmukh/khedut-voice-ai|$SCRIPT_DIR|g" \
+    /etc/systemd/system/khedut-voice-pi.service
+sudo systemctl daemon-reload
+sudo systemctl enable khedut-voice-pi
+echo "      ✅ Service installed and enabled (will auto-start on next boot)."
 echo ""
-echo "  To auto-start on boot (systemd):"
-echo "    sudo cp khedut-voice-pi.service /etc/systemd/system/"
-echo "    sudo sed -i \"s|/home/pi/khedut-voice-ai|$SCRIPT_DIR|g\" /etc/systemd/system/khedut-voice-pi.service"
-echo "    sudo systemctl daemon-reload"
-echo "    sudo systemctl enable khedut-voice-pi"
-echo "    sudo systemctl start khedut-voice-pi"
+echo "  ─────────────────────────────────────────────"
+echo "  Useful commands:"
+echo "    Start now  :  sudo systemctl start khedut-voice-pi"
+echo "    Stop       :  sudo systemctl stop khedut-voice-pi"
+echo "    Restart    :  sudo systemctl restart khedut-voice-pi"
+echo "    Status     :  sudo systemctl status khedut-voice-pi"
+echo "    Live logs  :  journalctl -u khedut-voice-pi -f"
+echo "  ─────────────────────────────────────────────"
+echo ""
+
+read -p "  Start the Voice AI right now? [y/N]: " START_NOW
+if [[ "$START_NOW" =~ ^[Yy]$ ]]; then
+    sudo systemctl start khedut-voice-pi
+    echo "  Started! Follow logs with:"
+    echo "    journalctl -u khedut-voice-pi -f"
+else
+    echo "  Not started. Run 'sudo systemctl start khedut-voice-pi' when ready."
+fi
 echo ""

@@ -2,33 +2,37 @@
 Description=Khedut Voice AI - Raspberry Pi Standalone Agent
 Documentation=https://github.com/merhasmukh/khedut-voice-ai
 After=network-online.target bluetooth.target sound.target pulseaudio.service
-Wants=network-online.target bluetooth.target
-Requires=pulseaudio.service
+Wants=network-online.target bluetooth.target pulseaudio.service
 
 [Service]
 Type=simple
 User=pi
 Group=pi
 
-# Change this path to where you cloned the repo on your Pi
-WorkingDirectory=/home/pi/khedut-voice-ai
-ExecStart=/home/pi/khedut-voice-ai/venv/bin/python /home/pi/khedut-voice-ai/pi_voice_agent.py
+# Project path on Raspberry Pi
+WorkingDirectory=/home/pi/hasmukh/khedut-voice-ai
 
-# Restart automatically on failure
-Restart=on-failure
-RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=3
+# Wrapper script: waits for internet, checks API key, activates venv, starts agent
+ExecStart=/home/pi/hasmukh/khedut-voice-ai/start.sh
 
-# Logging
+# Always restart — even on clean exit (handles dropped network, etc.)
+Restart=always
+RestartSec=10
+
+# Disable crash-loop limit — never permanently stop
+StartLimitIntervalSec=0
+
+# Allow up to 2 minutes for internet wait inside start.sh
+TimeoutStartSec=120
+
+# Logging — view with: journalctl -u khedut-voice-pi -f
 StandardOutput=journal
 StandardError=journal
 
-# Environment
+# Keep Python output unbuffered so logs appear in real-time
 Environment=PYTHONUNBUFFERED=1
-Environment=DISPLAY=:0
 
-# Audio: allow access to ALSA/PulseAudio
+# Audio device access
 SupplementaryGroups=audio bluetooth
 
 [Install]
