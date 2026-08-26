@@ -87,7 +87,7 @@ KNOWLEDGE_BASE_TOOL = {
                     },
                     "audio_url": {
                         "type": "STRING",
-                        "description": "ઓડિયો ફાઇલની URL (દા.ત. '/api/experiences/audio/valsad_asmukhbhai_experience.mp3')"
+                        "description": "ઓડિયો ફાઇલની URL (દા.ત. '/api/experiences/audio/valsad.mp3')"
                     },
                     "experience_years": {
                         "type": "STRING",
@@ -285,7 +285,7 @@ async def handle_gemini_live_session(
                                     if func_name == "play_farmer_experience_audio":
                                         farmer_name = args.get("farmer_name") or "હસમુખભાઈ પટેલ"
                                         district = args.get("district") or "વલસાડ"
-                                        audio_url = args.get("audio_url") or "/api/experiences/audio/valsad_asmukhbhai_experience.mp3"
+                                        audio_url = args.get("audio_url") or "/api/experiences/audio/valsad.mp3"
                                         experience_years = args.get("experience_years") or "૫ વર્ષ"
 
                                         print(f"🎙️ [Experience Audio Triggered] {farmer_name} ({district}) -> {audio_url}")

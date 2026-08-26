@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import audioop
 import base64
 import collections
 import json
@@ -68,9 +69,10 @@ AUDIO_INPUT_DEVICE_INDEX  = None   # USB Microphone
 AUDIO_OUTPUT_DEVICE_INDEX = None   # Bluetooth Speaker (system default)
 
 # -- Audio Parameters ---------------------------------------------------------
-MIC_SAMPLE_RATE      = 16000   # Gemini Live expects 16 kHz
+MIC_CAPTURE_RATE     = 44100   # USB mics on Pi usually support 44100 Hz
+GEMINI_INPUT_RATE    = 16000   # Gemini Live expects 16 kHz — we resample before sending
 MIC_CHANNELS         = 1
-MIC_CHUNK_FRAMES     = 512     # ~32 ms per chunk (low latency)
+MIC_CHUNK_FRAMES     = 1024    # ~23 ms at 44100 Hz
 SPEAKER_SAMPLE_RATE  = 24000   # Gemini Live outputs 24 kHz PCM
 SPEAKER_CHANNELS     = 1
 AUDIO_FORMAT         = pyaudio.paInt16
@@ -216,7 +218,7 @@ def play_experience_audio(audio_url: str) -> bool:
         print("WARNING: pygame unavailable -- skipping experience audio")
         return False
 
-    # URL may look like  /api/experiences/audio/valsad_asmukhbhai_experience.mp3
+    # URL may look like  /api/experiences/audio/valsad.mp3
     filename = audio_url.replace("\\", "/").split("/")[-1]
     filepath = os.path.join(AUDIO_EXPERIENCE_DIR, filename)
 
@@ -357,7 +359,7 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> str | None:
         elif fn_name == "play_farmer_experience_audio":
             farmer_name      = fn_args.get("farmer_name")  or "હસમુખભાઈ પટેલ"
             district         = fn_args.get("district")     or "વલસાડ"
-            audio_url        = fn_args.get("audio_url")    or "/api/experiences/audio/valsad_asmukhbhai_experience.mp3"
+            audio_url        = fn_args.get("audio_url")    or "/api/experiences/audio/valsad.mp3"
             experience_years = fn_args.get("experience_years") or "૫ વર્ષ"
 
             print(f"Queued experience audio: {farmer_name} ({district}) [{experience_years}]")
@@ -486,7 +488,7 @@ async def run_pi_session(
     mic_stream = pa.open(
         format=AUDIO_FORMAT,
         channels=MIC_CHANNELS,
-        rate=MIC_SAMPLE_RATE,
+        rate=MIC_CAPTURE_RATE,
         input=True,
         input_device_index=input_device,
         frames_per_buffer=MIC_CHUNK_FRAMES,
@@ -553,13 +555,19 @@ async def run_pi_session(
                         speech_streak = 0
                         continue
 
-                    # 3. Idle / Listening to Farmer: Stream mic audio to Gemini Live
+                    # 3. Idle / Listening to Farmer: resample 44100→16000 then stream to Gemini Live
                     speech_streak = 0
+                    # Downsample from capture rate to Gemini's expected 16 kHz
+                    pcm_16k, _ = audioop.ratecv(
+                        pcm, 2, MIC_CHANNELS,
+                        MIC_CAPTURE_RATE, GEMINI_INPUT_RATE,
+                        None
+                    )
                     await gemini_ws.send(json.dumps({
                         "realtimeInput": {
                             "audio": {
                                 "mimeType": "audio/pcm;rate=16000",
-                                "data": base64.b64encode(pcm).decode(),
+                                "data": base64.b64encode(pcm_16k).decode(),
                             }
                         }
                     }))

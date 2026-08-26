@@ -993,7 +993,7 @@ function startExperienceAudio(msg) {
   if (expFarmerTitle) expFarmerTitle.textContent = `${msg.farmer_name || 'હસમુખભાઈ પટેલ'} (${msg.district || 'વલસાડ'})`;
   if (expFarmerDesc) expFarmerDesc.textContent = `${msg.experience_years || '૫ વર્ષ'}થી સફળ પ્રાકૃતિક/ઓર્ગેનિક ખેતીનો જાત-અનુભવ`;
   if (expAudioElement) {
-    expAudioElement.src = msg.audio_url || '/api/experiences/audio/valsad_asmukhbhai_experience.mp3';
+    expAudioElement.src = msg.audio_url || '/api/experiences/audio/valsad.mp3';
     if (expBanner) expBanner.style.display = 'block';
     expAudioElement.play().catch(e => console.warn('Audio play notice:', e));
   }
