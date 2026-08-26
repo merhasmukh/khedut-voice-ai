@@ -78,8 +78,10 @@ SPEAKER_SAMPLE_RATE  = 24000   # Gemini Live outputs 24 kHz PCM
 SPEAKER_CHANNELS     = 1
 AUDIO_FORMAT         = pyaudio.paInt16
 
-# -- Voice Activity Detection (Barge-in / Interruption) ------------------------
-INTERRUPT_RMS_THRESHOLD = 3600    # int16 RMS: firm voice energy required to interrupt (filters quiet/background noise)
+# ── Voice Activity Detection (VAD) / Noise Gate Constants ─────────────────────
+INTERRUPT_RMS_THRESHOLD = int(os.environ.get("INTERRUPT_RMS_THRESHOLD", 3600))  # RMS required to interrupt Amit Shah audio
+NOISE_GATE_THRESHOLD    = int(os.environ.get("NOISE_GATE_THRESHOLD", 6000))     # Default RMS to open the mic (filters wind)
+NOISE_GATE_HANG_FRAMES  = 30      # Keep mic open for ~600ms after voice drops below threshold
 VAD_STREAK_TRIGGER      = 3       # consecutive frames (~70ms) above threshold to trigger deliberate interrupt
 
 # -- Paths --------------------------------------------------------------------
@@ -560,6 +562,7 @@ async def run_pi_session(
     voice: str  = DEFAULT_VOICE,
     session_id: str | None = None,
     interrupt_threshold: int = INTERRUPT_RMS_THRESHOLD,
+    noise_gate: int = NOISE_GATE_THRESHOLD,
 ):
     """
     Full always-listening voice loop for Raspberry Pi with default barge-in interruption.
@@ -709,6 +712,9 @@ async def run_pi_session(
                     # ---------------------------------------------------------
                     async def mic_to_gemini():
                         nonlocal speech_streak
+                        hang_frames = 0
+                        gate_open = False
+
                         while True:
                             pcm = await loop.run_in_executor(None, mic_q.get)
                             if pcm is None:
@@ -733,13 +739,21 @@ async def run_pi_session(
                                 speech_streak = 0
                                 continue
 
-                            # ── 3. Normal Listening Mode ──────────
-                            if rms >= 1500:
-                                speech_streak += 1
-                                if speech_streak == 2:
+                            # ── 3. Noise Gate & Normal Listening ────────────
+                            if rms >= noise_gate:
+                                hang_frames = NOISE_GATE_HANG_FRAMES
+                                if not gate_open:
+                                    gate_open = True
                                     print(f"\n🎤 [Voice detected: RMS {int(rms)}]", end="", flush=True)
                             else:
-                                speech_streak = 0
+                                if hang_frames > 0:
+                                    hang_frames -= 1
+                                else:
+                                    gate_open = False
+
+                            # Apply noise gate: send zeros if gate is closed
+                            if not gate_open:
+                                pcm = b'\x00' * len(pcm)
 
                             pcm_16k, _ = audioop.ratecv(
                                 pcm, 2, MIC_CHANNELS,
@@ -917,6 +931,8 @@ Web / browser mode (runs independently alongside Pi mode):
                         help="Resume a previous session ID (optional)")
     parser.add_argument("--interrupt-threshold", type=int, default=INTERRUPT_RMS_THRESHOLD,
                         help=f"RMS energy threshold to interrupt AI playback (default: {INTERRUPT_RMS_THRESHOLD})")
+    parser.add_argument("--noise-gate", type=int, default=NOISE_GATE_THRESHOLD,
+                        help=f"RMS energy threshold to open mic and filter wind (default: {NOISE_GATE_THRESHOLD})")
     args = parser.parse_args()
 
     if args.list_devices:
@@ -939,6 +955,7 @@ Web / browser mode (runs independently alongside Pi mode):
     print(f"  Mic                 : {'System default' if in_dev  is None else f'Device {in_dev}'}")
     print(f"  Speaker             : {'System default (Bluetooth if set)' if out_dev is None else f'Device {out_dev}'}")
     print(f"  Interrupt Threshold : {args.interrupt_threshold}")
+    print(f"  Noise Gate Threshold: {args.noise_gate}")
     print(f"  Voice Interruption  : Enabled by default ⚡")
     if args.session:
         print(f"  Session             : {args.session} (resuming)")
@@ -953,6 +970,7 @@ Web / browser mode (runs independently alongside Pi mode):
             voice=args.voice,
             session_id=args.session,
             interrupt_threshold=args.interrupt_threshold,
+            noise_gate=args.noise_gate,
         ))
     except KeyboardInterrupt:
         print("\nGoodbye!")
