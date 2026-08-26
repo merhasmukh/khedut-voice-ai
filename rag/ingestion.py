@@ -165,6 +165,10 @@ def load_json_documents(file_path: Path) -> List[Dict[str, Any]]:
             content_parts.append(f"સાવચેતી: {item['precautions']}")
         if item.get("audio_url") or item.get("audio_file"):
             content_parts.append(f"ઓડિયો રેકોર્ડિંગ ઉપલબ્ધ: {item.get('audio_url') or item.get('audio_file')}")
+        if item.get("pdf_url"):
+            content_parts.append(f"સત્તાવાર પુસ્તક PDF ડાઉનલોડ લિંક: {item['pdf_url']}")
+        if item.get("video_url"):
+            content_parts.append(f"સત્તાવાર YouTube વિડીયો લિંક: {item['video_url']}")
         if item.get("keywords"):
             kw = item["keywords"]
             kw_str = ", ".join(kw) if isinstance(kw, list) else str(kw)

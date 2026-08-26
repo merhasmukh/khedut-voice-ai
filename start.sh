@@ -73,6 +73,8 @@ source "$VENV"
 log "venv activated: $(python --version)"
 
 # -- 6. Launch voice agent (exec = systemd tracks this PID directly) -----------
+log "Allowing audio drivers to settle..."
+sleep 2
 log "Launching pi_voice_agent.py ..."
 log "=============================================="
 

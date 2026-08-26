@@ -86,9 +86,108 @@ PROJECT_DIR          = os.path.dirname(os.path.abspath(__file__))
 AUDIO_EXPERIENCE_DIR = os.path.join(PROJECT_DIR, "audio_experiences")
 
 
+# Suppress noisy ALSA lib error outputs on Linux/Raspberry Pi
+try:
+    import ctypes
+    ERROR_HANDLER_FUNC = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
+    def _py_error_handler(filename, line, function, err, fmt):
+        pass
+    c_error_handler = ERROR_HANDLER_FUNC(_py_error_handler)
+    asound = ctypes.cdll.LoadLibrary('libasound.so.2')
+    asound.snd_lib_error_set_handler(c_error_handler)
+except Exception:
+    pass
+
 # =============================================================================
-# Audio device listing
+# Audio device listing & intelligent auto-detection
 # =============================================================================
+
+def find_best_input_device(pa: pyaudio.PyAudio, preferred_index: int | None = None) -> int | None:
+    """
+    Finds the most suitable working audio input device index (USB mic).
+    Falls back to any input-capable device if the default is not marked.
+    """
+    count = pa.get_device_count()
+    if count == 0:
+        return None
+
+    if preferred_index is not None:
+        try:
+            info = pa.get_device_info_by_index(preferred_index)
+            if info.get("maxInputChannels", 0) > 0:
+                return preferred_index
+        except Exception:
+            pass
+
+    # 1. Try system default
+    try:
+        default_in = pa.get_default_input_device_info()
+        if default_in.get("maxInputChannels", 0) > 0:
+            return default_in["index"]
+    except Exception:
+        pass
+
+    # 2. Search for USB / mic device
+    usb_candidate = None
+    first_input = None
+    for i in range(count):
+        try:
+            info = pa.get_device_info_by_index(i)
+            if info.get("maxInputChannels", 0) > 0:
+                if first_input is None:
+                    first_input = i
+                name_lower = info.get("name", "").lower()
+                if "usb" in name_lower or "mic" in name_lower:
+                    usb_candidate = i
+                    break
+        except Exception:
+            continue
+
+    return usb_candidate if usb_candidate is not None else first_input
+
+
+def find_best_output_device(pa: pyaudio.PyAudio, preferred_index: int | None = None) -> int | None:
+    """
+    Finds the most suitable working audio output device index (Speaker / Bluetooth).
+    """
+    count = pa.get_device_count()
+    if count == 0:
+        return None
+
+    if preferred_index is not None:
+        try:
+            info = pa.get_device_info_by_index(preferred_index)
+            if info.get("maxOutputChannels", 0) > 0:
+                return preferred_index
+        except Exception:
+            pass
+
+    # 1. Try system default
+    try:
+        default_out = pa.get_default_output_device_info()
+        if default_out.get("maxOutputChannels", 0) > 0:
+            return default_out["index"]
+    except Exception:
+        pass
+
+    # 2. Search for preferred output devices (Pulse, bluez, default, headphone, speaker)
+    first_output = None
+    preferred_candidate = None
+    for i in range(count):
+        try:
+            info = pa.get_device_info_by_index(i)
+            if info.get("maxOutputChannels", 0) > 0:
+                if first_output is None:
+                    first_output = i
+                name_lower = info.get("name", "").lower()
+                if any(k in name_lower for k in ("pulse", "default", "bluez", "headphone", "speaker", "usb")):
+                    preferred_candidate = i
+                    break
+        except Exception:
+            continue
+
+    return preferred_candidate if preferred_candidate is not None else first_output
+
 
 def list_audio_devices():
     pa = pyaudio.PyAudio()
@@ -471,9 +570,6 @@ async def run_pi_session(
         except Exception as exc:
             print(f"WARNING: pygame init failed: {exc}")
 
-    pa     = pyaudio.PyAudio()
-    player = AudioPlayer(pa, device_index=output_device)
-
     mic_q    = queue.Queue(maxsize=300)
     shutdown = threading.Event()
 
@@ -485,17 +581,46 @@ async def run_pi_session(
                 pass
         return (None, pyaudio.paContinue)
 
-    mic_stream = pa.open(
-        format=AUDIO_FORMAT,
-        channels=MIC_CHANNELS,
-        rate=MIC_CAPTURE_RATE,
-        input=True,
-        input_device_index=input_device,
-        frames_per_buffer=MIC_CHUNK_FRAMES,
-        stream_callback=mic_callback,
-    )
-    mic_stream.start_stream()
-    print("Microphone open -- always listening...\n")
+    # 3. Audio hardware initialization with intelligent device detection and retry
+    pa = None
+    player = None
+    mic_stream = None
+    max_audio_retries = 12
+
+    for audio_attempt in range(1, max_audio_retries + 1):
+        try:
+            if pa is not None:
+                try:
+                    pa.terminate()
+                except Exception:
+                    pass
+            pa = pyaudio.PyAudio()
+            in_idx = find_best_input_device(pa, input_device)
+            out_idx = find_best_output_device(pa, output_device)
+
+            in_name = pa.get_device_info_by_index(in_idx)["name"] if in_idx is not None else "Default"
+            out_name = pa.get_device_info_by_index(out_idx)["name"] if out_idx is not None else "Default"
+            print(f"🎙️ Audio setup: Input -> [{in_idx}] {in_name}, Output -> [{out_idx}] {out_name}")
+
+            player = AudioPlayer(pa, device_index=out_idx)
+            mic_stream = pa.open(
+                format=AUDIO_FORMAT,
+                channels=MIC_CHANNELS,
+                rate=MIC_CAPTURE_RATE,
+                input=True,
+                input_device_index=in_idx,
+                frames_per_buffer=MIC_CHUNK_FRAMES,
+                stream_callback=mic_callback,
+            )
+            mic_stream.start_stream()
+            print("Microphone & speaker open -- always listening...\n")
+            break
+        except Exception as exc:
+            if audio_attempt >= max_audio_retries:
+                print(f"❌ Could not initialize audio devices after {max_audio_retries} attempts: {exc}")
+                raise
+            print(f"⏳ Waiting for audio devices to settle on boot (attempt {audio_attempt}/{max_audio_retries}): {exc}")
+            await asyncio.sleep(2)
 
     loop = asyncio.get_event_loop()
 
@@ -513,15 +638,57 @@ async def run_pi_session(
     # ── Reconnect loop — keeps mic open, only restarts the WebSocket ──────────
     reconnect_delay = 3   # seconds between reconnect attempts
     attempt = 0
+    IDLE_TIMEOUT_SEC = 15
 
     try:
         while True:
+            # === 1. IDLE STATE ===
+            print("\n💤 System IDLE. Waiting for voice to wake up...")
+            speech_streak = 0
+            pre_buffer = []
+            max_buffer_chunks = 20  # ~460ms of audio buffered
+
+            while True:
+                pcm = await loop.run_in_executor(None, mic_q.get)
+                if pcm is None:
+                    raise KeyboardInterrupt  # Clean exit
+
+                # Check if an experience MP3 is currently playing loudly
+                if is_experience_playing():
+                    rms = compute_rms(pcm)
+                    if rms >= interrupt_threshold:
+                        speech_streak += 1
+                        if speech_streak >= VAD_STREAK_TRIGGER:
+                            print(f"\n⚡ User voice detected (RMS: {int(rms)}) -> stopping experience audio")
+                            stop_experience_audio()
+                            speech_streak = 0
+                    else:
+                        speech_streak = max(0, speech_streak - 1)
+                    continue
+
+                # Normal VAD logic to wake up
+                rms = compute_rms(pcm)
+                if rms >= interrupt_threshold:
+                    speech_streak += 1
+                    if speech_streak >= VAD_STREAK_TRIGGER:
+                        print(f"\n🔔 Voice detected (RMS: {int(rms)}). Waking up and connecting...")
+                        pre_buffer.append(pcm)
+                        speech_streak = 0
+                        break  # Break IDLE loop to connect
+                else:
+                    speech_streak = max(0, speech_streak - 1)
+
+                pre_buffer.append(pcm)
+                if len(pre_buffer) > max_buffer_chunks:
+                    pre_buffer.pop(0)
+
+            # === 2. ACTIVE STATE ===
             attempt += 1
             url       = get_gemini_ws_url(api_key)
             setup_msg = build_setup_message(model, full_instruction, voice)
 
             try:
-                print(f"\n🔗 Connecting to Gemini Live (attempt {attempt})...")
+                print(f"🔗 Connecting to Gemini Live (attempt {attempt})...")
                 async with websockets.connect(
                     url,
                     open_timeout=30,
@@ -531,37 +698,34 @@ async def run_pi_session(
                     max_size=None,
                 ) as gemini_ws:
                     print("Gemini Live connected!")
-                    attempt = 0   # reset counter on successful connect
+                    attempt = 0
 
                     # Handshake
                     await gemini_ws.send(json.dumps(setup_msg))
                     raw = await asyncio.wait_for(gemini_ws.recv(), timeout=15.0)
                     if "setupComplete" in json.loads(raw):
-                        print("Setup complete. Gemini is ready.\n" + "-" * 50)
+                        print("Setup complete. Sending buffered audio...\n" + "-" * 50)
                     else:
                         print(f"Unexpected setup response: {raw[:200]}")
 
-                    # ── Proactive greeting ─────────────────────────────────────
-                    # Triggers Gemini to say "રામ રામ, કેમ છો?" immediately on
-                    # connect — warms up the round-trip so first real answer is fast.
-                    await gemini_ws.send(json.dumps({
-                        "clientContent": {
-                            "turns": [{"role": "user", "parts": [{"text": "start"}]}],
-                            "turnComplete": True
-                        }
-                    }))
-                    print("🎙️ Greeting triggered — Gemini is introducing itself.")
+                    # Send the pre-buffer immediately so Gemini hears the start of the word
+                    for b_pcm in pre_buffer:
+                        pcm_16k, _ = audioop.ratecv(b_pcm, 2, MIC_CHANNELS, MIC_CAPTURE_RATE, GEMINI_INPUT_RATE, None)
+                        await gemini_ws.send(json.dumps({
+                            "realtimeInput": {"audio": {"mimeType": "audio/pcm;rate=16000", "data": base64.b64encode(pcm_16k).decode()}}
+                        }))
 
-                    speech_streak  = 0
                     ai_is_speaking = False
+                    connection_alive = True
+                    last_active_time = time.time()
 
-                    # ---------------------------------------------------------
-                    # Task A: mic -> Gemini
-                    # ---------------------------------------------------------
                     async def mic_to_gemini():
-                        nonlocal speech_streak
-                        while True:
-                            pcm = await loop.run_in_executor(None, mic_q.get)
+                        nonlocal speech_streak, last_active_time, connection_alive
+                        while connection_alive:
+                            try:
+                                pcm = await asyncio.wait_for(loop.run_in_executor(None, mic_q.get), timeout=0.5)
+                            except asyncio.TimeoutError:
+                                continue
                             if pcm is None:
                                 break
 
@@ -581,30 +745,24 @@ async def run_pi_session(
                                 speech_streak = 0
                                 continue
 
+                            rms = compute_rms(pcm)
+                            if rms > (interrupt_threshold / 2):
+                                last_active_time = time.time()
+
                             speech_streak = 0
-                            pcm_16k, _ = audioop.ratecv(
-                                pcm, 2, MIC_CHANNELS,
-                                MIC_CAPTURE_RATE, GEMINI_INPUT_RATE,
-                                None
-                            )
+                            pcm_16k, _ = audioop.ratecv(pcm, 2, MIC_CHANNELS, MIC_CAPTURE_RATE, GEMINI_INPUT_RATE, None)
                             await gemini_ws.send(json.dumps({
-                                "realtimeInput": {
-                                    "audio": {
-                                        "mimeType": "audio/pcm;rate=16000",
-                                        "data": base64.b64encode(pcm_16k).decode(),
-                                    }
-                                }
+                                "realtimeInput": {"audio": {"mimeType": "audio/pcm;rate=16000", "data": base64.b64encode(pcm_16k).decode()}}
                             }))
 
-                    # ---------------------------------------------------------
-                    # Task B: Gemini -> speaker + tool handling
-                    # ---------------------------------------------------------
                     async def gemini_to_speaker():
-                        nonlocal ai_is_speaking
+                        nonlocal ai_is_speaking, last_active_time, connection_alive
                         ai_text_parts = []
                         queued_experience_audio = None
 
                         async for raw_msg in gemini_ws:
+                            if not connection_alive:
+                                break
                             try:
                                 msg = json.loads(raw_msg)
                             except Exception:
@@ -621,16 +779,14 @@ async def run_pi_session(
                                 partial = "".join(ai_text_parts).strip()
                                 ai_text_parts.clear()
                                 if partial:
-                                    asyncio.create_task(
-                                        _persist_message(session_id, "assistant",
-                                                         f"{partial} ... [અટકાવેલ]")
-                                    )
+                                    asyncio.create_task(_persist_message(session_id, "assistant", f"{partial} ... [અટકાવેલ]"))
                                 continue
 
                             tool_call = msg.get("toolCall") or sc.get("toolCall")
                             if tool_call:
                                 fn_calls = tool_call.get("functionCalls", [])
                                 if fn_calls:
+                                    last_active_time = time.time()
                                     new_audio = await _handle_tool_calls(gemini_ws, fn_calls)
                                     if new_audio:
                                         queued_experience_audio = new_audio
@@ -639,14 +795,17 @@ async def run_pi_session(
                             for part in model_turn.get("parts", []):
                                 inline = part.get("inlineData", {})
                                 if inline.get("data"):
+                                    last_active_time = time.time()
                                     ai_is_speaking = True
                                     player.feed(base64.b64decode(inline["data"]))
                                 if part.get("text"):
+                                    last_active_time = time.time()
                                     ai_text_parts.append(part["text"])
                                     print(f"AI: {part['text']}", end="", flush=True)
 
                             out_tr = sc.get("outputTranscription", {})
                             if out_tr.get("text"):
+                                last_active_time = time.time()
                                 ai_text_parts.append(out_tr["text"])
                                 print(f"AI: {out_tr['text']}", end="", flush=True)
 
@@ -669,24 +828,39 @@ async def run_pi_session(
                                     print("🎤 [તમારો પ્રશ્ન પૂછો / Please speak now...]")
 
                                 if full_text:
-                                    asyncio.create_task(
-                                        _persist_message(session_id, "assistant", full_text)
-                                    )
-                                    asyncio.create_task(
-                                        _update_farmer_profile(session_id)
-                                    )
+                                    asyncio.create_task(_persist_message(session_id, "assistant", full_text))
+                                    asyncio.create_task(_update_farmer_profile(session_id))
 
-                    await asyncio.gather(mic_to_gemini(), gemini_to_speaker())
-                    # If gather() returns cleanly, reconnect
-                    print("ℹ️  Gemini session ended. Reconnecting...")
+                    async def timeout_watcher():
+                        nonlocal connection_alive
+                        while connection_alive:
+                            await asyncio.sleep(1)
+                            if time.time() - last_active_time > IDLE_TIMEOUT_SEC:
+                                print(f"\n⏱️ {IDLE_TIMEOUT_SEC} seconds of silence. Closing connection to save resources.")
+                                connection_alive = False
+                                await gemini_ws.close()
+                                break
+
+                    # Run all three tasks concurrently
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(mic_to_gemini()),
+                            asyncio.create_task(gemini_to_speaker()),
+                            asyncio.create_task(timeout_watcher())
+                        ],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    
+                    # Cleanup remaining tasks
+                    connection_alive = False
+                    for task in pending:
+                        task.cancel()
 
             except KeyboardInterrupt:
-                raise   # propagate to outer handler
+                raise
 
             except Exception as exc:
                 err_str = str(exc)
-
-                # Auth errors — no point retrying, exit cleanly
                 if "1008" in err_str or "1007" in err_str or "authentication" in err_str.lower():
                     print("\n" + "=" * 60)
                     print("🔑 GEMINI API KEY AUTHENTICATION ERROR")
@@ -695,13 +869,11 @@ async def run_pi_session(
                     print("=" * 60 + "\n")
                     raise
 
-                # All other errors (no close frame, network drop, timeout…) — reconnect
-                print(f"\n⚠️  Session error: {err_str}")
-                print(f"   Reconnecting in {reconnect_delay}s... (mic stays open)")
+                # Print error but don't sleep. The IDLE loop will catch the next voice.
+                print(f"\n⚠️  Session ended or error: {err_str}")
                 player.clear()
                 stop_experience_audio()
-                await asyncio.sleep(reconnect_delay)
-                # Back to top of while True → reconnects
+
 
     except KeyboardInterrupt:
         print("\n\nStopping...")

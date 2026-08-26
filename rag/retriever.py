@@ -64,9 +64,11 @@ def _search_local_json_knowledge(query: str, limit: int = 3) -> List[Dict[str, A
                 farmer_name = item.get("farmer_name") or ""
                 district = item.get("district") or ""
                 audio_url = item.get("audio_url") or item.get("audio_file") or ""
+                pdf_url = item.get("pdf_url") or ""
+                video_url = item.get("video_url") or ""
                 category = item.get("category") or "પ્રાકૃતિક ખેતી"
 
-                full_item_text = f"{title} {summary} {content} {kw_text} {farmer_name} {district} {category}".lower()
+                full_item_text = f"{title} {summary} {content} {kw_text} {farmer_name} {district} {category} {pdf_url} {video_url}".lower()
                 clean_q_lower = query.lower()
                 score = 0
 
@@ -96,6 +98,10 @@ def _search_local_json_knowledge(query: str, limit: int = 3) -> List[Dict[str, A
                         text_display += f"{content}\n"
                     if audio_url:
                         text_display += f"ઓડિયો રેકોર્ડિંગ URL: {audio_url}\n"
+                    if pdf_url:
+                        text_display += f"સત્તાવાર પુસ્તક PDF ડાઉનલોડ લિંક: {pdf_url}\n"
+                    if video_url:
+                        text_display += f"સત્તાવાર YouTube વિડીયો લિંક: {video_url}\n"
 
                     matches.append({
                         "id": item.get("id") or str(json_file.name),
@@ -105,6 +111,8 @@ def _search_local_json_knowledge(query: str, limit: int = 3) -> List[Dict[str, A
                         "category": category,
                         "crop": item.get("crop", "બધા"),
                         "audio_url": audio_url,
+                        "pdf_url": pdf_url,
+                        "video_url": video_url,
                         "farmer_name": farmer_name,
                         "district": district,
                         "source_file": json_file.name,
