@@ -45,18 +45,24 @@ BASE_SYSTEM_INSTRUCTION = """\
    - સાથે `play_farmer_experience_audio` ટૂલ બોલાવો. ટૂલ બોલાવ્યા પછી વધારાનું બીજું કંઈ ન બોલવું જેથી ખેડૂત શાંતિથી ઓડિયો સાંભળી શકે.
 4. વેક્ટર સ્ટોરમાંથી માહિતી મેળવવી: જ્યારે પણ ખેડૂત કોઈ ચોક્કસ આંકડા (જેમ કે કોઈ જિલ્લામાં પ્રાકૃતિક ખેતી કરતા ખેડૂતોની સંખ્યા), ખાતર/દવાના ડોઝ, બનાવવાની રીત કે પાક વિષયક માહિતી પૂછે, ત્યારે `search_agricultural_knowledge_base` ટૂલનો ઉપયોગ કરી વેક્ટર સ્ટોરમાંથી સાચી માહિતી શોધીને જ ચોક્કસ જવાબ આપો.
 5. ટૂંકો અને સરળ જવાબ: ખેડૂત જે પ્રશ્ન પૂછે, તેનો જ સીધો, સાચો અને સરળ ૧ થી ૩ વાક્યોમાં દેશી ગુજરાતીમાં જવાબ આપો.
+   - મહત્વપૂર્ણ (URL ક્યારેય મોઢેથી ન બોલવી): વાતચીતમાં બોલતી વખતે ક્યારેય કોઈ પણ વેબસાઇટ, PDF કે YouTube ની લાંબી વેબ લિંક્સ (જેમ કે https://www.youtube... કે https://www.kamdhenuuni...) અક્ષરે-અક્ષર ન બોલવી. અવાજમાં માત્ર પુસ્તક કે વિડીયોનું નામ કહો અને કહો કે "જો તમારે આની લિંક જોઈતી હોય તો તમારો WhatsApp નંબર આપો, હું તમને WhatsApp પર લિંક મોકલી આપું."
 6. વિગત ત્યારે જ આપવી: ખેડૂત જ્યારે "વિગતે સમજાવો" અથવા "detail માં કહો" એમ કહે ત્યારે જ વિસ્તારથી જવાબ આપો.
 7. પ્રાકૃતિક/ઓર્ગેનિક ઉપાય: ફક્ત દેશી ખાતર (જીવામૃત, ઘનજીવામૃત) અને જૈવિક કીટ નિયંત્રણ (નીમાસ્ત્ર, બ્રહ્માસ્ત્ર, અગ્નિઅસ્ત્ર, દશપર્ણી અર્ક, ખાટી છાશ) સૂચવો. કોઈ રાસાયણિક દવા કે ખાતર ન જણાવવા.
 8. સ્નેહાળ ગ્રામીણ ભાષા: ગુજરાત-સૌરાષ્ટ્રની આત્મીય, મીઠી અને સન્માનજનક ગ્રામીણ ગુજરાતી ભાષા વાપરો.
 9. WhatsApp પર જવાબ મોકલવો: જ્યારે ખેડૂત "WhatsApp પર મોકલો", "WhatsApp ma moklo", "WhatsApp par mokli do" અથવા similar request કરે:
    - પ્રથમ ખેડૂતનો WhatsApp નંબર પૂછો: "ભાઈ, તમારો WhatsApp નંબર આપો."
    - ખેડૂત નંબર આપ્યા પછી `send_whatsapp_answer` ટૂલ બોલાવો.
-   - answer_text = વાતચીતમાં છેલ્લો આપેલ જ્ઞાન-ભરેલો AI જવાબ (૧-૩ વાક્ય, ગુજરાતી). મહત્વપૂર્ણ: જો જવાબમાં YouTube વિડીયો કે પુસ્તકની લિંક હોય, તો હંમેશા આખી સાચી URL લિંક (https://www.youtube.com/watch?v=... અથવા https://www.kamdhenuuni.edu.in/...pdf) જ લખો. ક્યારેય [YouTube Video Link] કે [લિંક] જેવા શબ્દો ન વાપરો.
-   - ટૂલ સફળ થાય ત્યારે AI બોલે: "WhatsApp પર મોકલ્યો! ચેક કરી લેજો."
+   - answer_text = WhatsApp મેસેજ માટેનો જવાબ. જો જવાબમાં YouTube વિડીયો કે પુસ્તકની લિંક હોય, તો answer_text માં આખી સાચી URL લિંક (https://www.youtube.com/watch?v=... અથવા https://www.kamdhenuuni.edu.in/...pdf) લખો.
+   - મોઢેથી બોલતી વખતે URL ન બોલવી: ટૂલ સફળ થાય ત્યારે AI અવાજમાં માત્ર આટલું જ બોલે: "મેં WhatsApp પર મોકલી દીધું છે, ચેક કરી લેજો!"
 10. પુસ્તકો, સાહિત્ય અને YouTube વિડીયો: જ્યારે પણ ખેડૂત પુસ્તક, સાહિત્ય, PDF કે YouTube વિડીયો વિશે પૂછે:
-   - પુસ્તક PDF માટે હંમેશા આ જ સત્તાવાર સાચી લિંક આપો: https://www.kamdhenuuni.edu.in/Content/writereaddata/images/pdf/Organic-Farming-eBook-by-Acharya-Devvrat-Govt-guj.pdf
-   - YouTube વિડીયો માટે હંમેશા આ સત્તાવાર લિંક આપો: https://www.youtube.com/watch?v=JUH-d6SFvjo
+   - અવાજમાં માત્ર પુસ્તક/વિડીયોનું નામ અને મહત્વ જણાવો (જેમ કે માનનીય રાજ્યપાલ શ્રી આચાર્ય દેવવ્રતજી લિખિત 'પ્રાકૃતિક કૃષિ' પુસ્તક). અવાજમાં URL લિંક મોઢેથી ક્યારેય ન બોલવી.
+   - WhatsApp મેસેજ (send_whatsapp_answer) માટે નીચેની સત્તાવાર સાચી લિંક્સ જ વાપરવી:
+     • પુસ્તક PDF માટે: https://www.kamdhenuuni.edu.in/Content/writereaddata/images/pdf/Organic-Farming-eBook-by-Acharya-Devvrat-Govt-guj.pdf
+     • YouTube વિડીયો માટે: https://www.youtube.com/watch?v=JUH-d6SFvjo
    - ક્યારેય કોઈ અંદાજિત કે ખોટી URL જાતે બનાવવી નહીં.
+11. શ્રી અમિતભાઈ શાહનું માર્ગદર્શક વક્તવ્ય (Amit Shah Talk Audio): જ્યારે પણ ખેડૂત શ્રી અમિતભાઈ શાહનું વક્તવ્ય સાંભળવા માંગે, અથવા દેશી ગાય સહાય (રૂ. ૯૦૦), અળસિયા-જળ સંરક્ષણ કે સહકારિતા મંત્રાલય દ્વારા નિકાસ અંગેનું ભાષણ/ઓડિયો સાંભળવા ઈચ્છે:
+   - ખેડૂતને સ્નેહપૂર્વક ૧ વાક્યમાં કહો: "ચાલો, હું તમને માનનીય ગૃહ અને સહકારિતા મંત્રી શ્રી અમિતભાઈ શાહનું પ્રાકૃતિક ખેતી અંગેનું પ્રેરણાદાયી વક્તવ્ય સંભળાવું."
+   - સાથે `play_amitshah_talk_audio` ટૂલ બોલાવો. ટૂલ બોલાવ્યા પછી વધારાનું બીજું કંઈ ન બોલવું જેથી ખેડૂત શાંતિથી ઓડિયો સાંભળી શકે.
 """
 
 KNOWLEDGE_BASE_TOOL = {
@@ -99,6 +105,28 @@ KNOWLEDGE_BASE_TOOL = {
                     }
                 },
                 "required": ["district", "audio_url"]
+            }
+        },
+        {
+            "name": "play_amitshah_talk_audio",
+            "description": "જ્યારે પણ ખેડૂત માનનીય ગૃહ અને સહકારિતા મંત્રી શ્રી અમિતભાઈ શાહનું પ્રાકૃતિક ખેતી, ગાય સહાય (રૂ. ૯૦૦), કેન્સર મુક્ત ખેતી કે નિકાસ અંગેનું માર્ગદર્શક વક્તવ્ય સાંભળવા માંગે, ત્યારે આ ટૂલ બોલાવીને શ્રી અમિતભાઈ શાહનો ઓરિજિનલ ઓડિયો શરૂ કરો.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {
+                    "speaker_name": {
+                        "type": "STRING",
+                        "description": "વક્તાનું નામ ('શ્રી અમિતભાઈ શાહ')"
+                    },
+                    "topic": {
+                        "type": "STRING",
+                        "description": "વિષય (દા.ત. 'પ્રાકૃતિક ખેતી મહત્વ, ગાય સહાય ૯૦૦ રૂપિયા અને નિકાસ')"
+                    },
+                    "audio_url": {
+                        "type": "STRING",
+                        "description": "ઓડિયો ફાઇલ URL (હંમેશા '/api/experiences/audio/amitshah.mp3')"
+                    }
+                },
+                "required": ["audio_url"]
             }
         },
         {
@@ -356,6 +384,30 @@ async def handle_gemini_live_session(
                                                 "content": {
                                                     "status": "playing",
                                                     "message": f"{farmer_name} (જિલ્લો: {district}) નો ઓડિયો અનુભવ પ્લે થઈ રહ્યો છે."
+                                                }
+                                            },
+                                            "id": call_id
+                                        })
+                                    elif func_name == "play_amitshah_talk_audio":
+                                        speaker_name = args.get("speaker_name") or "શ્રી અમિતભાઈ શાહ"
+                                        topic        = args.get("topic") or "પ્રાકૃતિક ખેતી મહત્વ અને ગાય સહાય"
+                                        audio_url    = args.get("audio_url") or "/api/experiences/audio/amitshah.mp3"
+
+                                        print(f"🎙️ [Amit Shah Audio Triggered] {speaker_name} -> {audio_url}")
+                                        await browser_ws.send_text(json.dumps({
+                                            "type": "play_experience_audio",
+                                            "farmer_name": speaker_name,
+                                            "district": "ગાંધીનગર / સમગ્ર ગુજરાત",
+                                            "audio_url": audio_url,
+                                            "experience_years": "માર્ગદર્શક વક્તવ્ય",
+                                        }))
+
+                                        function_responses.append({
+                                            "response": {
+                                                "name": func_name,
+                                                "content": {
+                                                    "status": "playing",
+                                                    "message": f"{speaker_name} નું માર્ગદર્શક વક્તવ્ય પ્લે થઈ રહ્યું છે."
                                                 }
                                             },
                                             "id": call_id

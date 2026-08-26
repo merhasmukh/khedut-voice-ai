@@ -79,8 +79,8 @@ SPEAKER_CHANNELS     = 1
 AUDIO_FORMAT         = pyaudio.paInt16
 
 # -- Voice Activity Detection (Barge-in / Interruption) ------------------------
-INTERRUPT_RMS_THRESHOLD = 4500    # int16 RMS: user voice threshold to interrupt during playback
-VAD_STREAK_TRIGGER      = 2       # consecutive frames (~64ms) above threshold to trigger interrupt
+INTERRUPT_RMS_THRESHOLD = 3600    # int16 RMS: firm voice energy required to interrupt (filters quiet/background noise)
+VAD_STREAK_TRIGGER      = 3       # consecutive frames (~70ms) above threshold to trigger deliberate interrupt
 
 # -- Paths --------------------------------------------------------------------
 PROJECT_DIR          = os.path.dirname(os.path.abspath(__file__))
@@ -476,6 +476,25 @@ async def _handle_tool_calls(gemini_ws, fn_calls: list) -> str | None:
                 "id": call_id,
             })
 
+        # ── Tool: play_amitshah_talk_audio ────────────────────────────────────
+        elif fn_name == "play_amitshah_talk_audio":
+            speaker_name = fn_args.get("speaker_name") or "શ્રી અમિતભાઈ શાહ"
+            audio_url    = fn_args.get("audio_url")    or "/api/experiences/audio/amitshah.mp3"
+
+            print(f"Queued guidance audio: {speaker_name} [{audio_url}]")
+            pending_audio = audio_url
+
+            fn_responses.append({
+                "response": {
+                    "name": fn_name,
+                    "content": {
+                        "status":  "queued",
+                        "message": f"{speaker_name} નું વક્તવ્ય AI બોલવાનું પૂરું કરે પછી શરૂ થશે.",
+                    },
+                },
+                "id": call_id,
+            })
+
         # ── Tool: send_whatsapp_answer ─────────────────────────────────────────
         elif fn_name == "send_whatsapp_answer":
             phone_raw   = fn_args.get("phone_number", "")
@@ -686,14 +705,15 @@ async def run_pi_session(
                     # Task A: mic -> Gemini
                     # ---------------------------------------------------------
                     async def mic_to_gemini():
-                        nonlocal speech_streak
+                        nonlocal speech_streak, ai_is_speaking
                         while True:
                             pcm = await loop.run_in_executor(None, mic_q.get)
                             if pcm is None:
                                 break
 
+                            rms = compute_rms(pcm)
+
                             if is_experience_playing():
-                                rms = compute_rms(pcm)
                                 if rms >= interrupt_threshold:
                                     speech_streak += 1
                                     if speech_streak >= VAD_STREAK_TRIGGER:
@@ -704,12 +724,27 @@ async def run_pi_session(
                                     speech_streak = max(0, speech_streak - 1)
                                 continue
 
+                            # ── Barge-in Interruption Check during AI speech ────────
                             if ai_is_speaking or player.is_playing():
-                                speech_streak = 0
-                                continue
+                                # Only a deliberate voice sustained for VAD_STREAK_TRIGGER frames interrupts AI
+                                if rms >= interrupt_threshold:
+                                    speech_streak += 1
+                                    if speech_streak >= VAD_STREAK_TRIGGER:
+                                        print(f"\n⚡ [User Interrupted AI: RMS {int(rms)}] -> Stopping AI speech & listening to new question...")
+                                        player.clear()
+                                        stop_experience_audio()
+                                        ai_is_speaking = False
+                                        speech_streak = 0
+                                        # Fall through to stream audio directly to Gemini
+                                    else:
+                                        continue
+                                else:
+                                    # Little voice / background noise: ignore and let AI continue speaking smoothly
+                                    speech_streak = max(0, speech_streak - 1)
+                                    continue
 
-                            rms = compute_rms(pcm)
-                            if rms >= (interrupt_threshold * 0.7):
+                            # ── Normal Listening Mode (AI is not speaking) ─────────
+                            if rms >= 1500:
                                 speech_streak += 1
                                 if speech_streak == 2:
                                     print(f"\n🎤 [Voice detected: RMS {int(rms)}]", end="", flush=True)
